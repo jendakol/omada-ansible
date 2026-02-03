@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DHCP Configuration",
+  "description": "Schema for DHCP static reservations",
+  "type": "object",
+  "required": ["dhcp_reservations"],
+  "properties": {
+    "dhcp_reservations": {
+      "type": "array",
+      "description": "List of DHCP static reservations",
+      "items": {
+        "type": "object",
+        "required": ["device", "vlan", "ip"],
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "Device name (must match entry in devices list)"
+          },
+          "vlan": {
+            "type": "string",
+            "description": "VLAN name (must match VLAN definition)"
+          },
+          "ip": {
+            "type": "string",
+            "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$",
+            "description": "Static IP address"
+          }
+        }
+      }
+    }
+  }
+}

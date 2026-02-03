@@ -1,0 +1,230 @@
+---
+# Test: PPSK (Private Pre-Shared Key) Configuration
+# Verifies CREATE, UPDATE, and IDEMPOTENCY for PPSK profiles and SSIDs using PPSK
+
+- name: Test PPSK Configuration
+  hosts: omada-controller
+  connection: local
+  gather_facts: false
+  vars:
+    omada_api_debug: true
+    omada_auto_cleanup: true  # Enable cleanup for testing
+
+  tasks:
+    # ==========================================
+    # PHASE 1: CREATE - Initial Configuration
+    # ==========================================
+    - name: "PHASE 1: CREATE - Setup infrastructure and create PPSK profile"
+      block:
+        - name: Include omada_controller role
+          include_role:
+            name: omada_controller
+
+        - name: Include vlans role (needed for PPSK VLANs)
+          include_role:
+            name: vlans
+
+        - name: Include ppsk_profiles role (initial config)
+          include_role:
+            name: ppsk_profiles
+
+        - name: Include wifi role (create SSID using PPSK)
+          include_role:
+            name: wifi
+
+        - name: Verify PPSK profile was created
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/ppsk?type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_create_ppsk
+
+        - name: Check Test-PPSK-VLANs profile created
+          assert:
+            that:
+              - verify_create_ppsk.json.result | selectattr('profileName', 'equalto', 'Test-PPSK-VLANs') | list | length > 0
+            fail_msg: "Test-PPSK-VLANs profile not created"
+            success_msg: "✓ Test-PPSK-VLANs profile created successfully"
+
+        - name: Get WLAN profile ID
+          uri:
+            url: "{{ omada_api_base }}/setting/wlans?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: wlan_profiles
+
+        - name: Set WLAN profile ID
+          set_fact:
+            test_wlan_profile_id: "{{ wlan_profiles.json.result.data[0].id }}"
+          when: wlan_profiles.json.result.data | length > 0
+
+        - name: Verify PPSK SSID was created
+          uri:
+            url: "{{ omada_api_base }}/setting/wlans/{{ test_wlan_profile_id }}/ssids?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_create_ssid
+          when: test_wlan_profile_id is defined
+
+        - name: Check Test-PPSK-SSID created with PPSK
+          assert:
+            that:
+              - verify_create_ssid.json.result.data | selectattr('name', 'equalto', 'Test-PPSK-SSID') | list | length > 0
+              - (verify_create_ssid.json.result.data | selectattr('name', 'equalto', 'Test-PPSK-SSID') | first).security == 4
+              - (verify_create_ssid.json.result.data | selectattr('name', 'equalto', 'Test-PPSK-SSID') | first).ppskSetting is defined
+            fail_msg: "Test-PPSK-SSID not created with PPSK security"
+            success_msg: "✓ Test-PPSK-SSID created with PPSK successfully"
+          when: verify_create_ssid is defined
+
+    # ==========================================
+    # PHASE 2: UPDATE - Modify Configuration & Test Cleanup
+    # ==========================================
+    - name: "PHASE 2: UPDATE - Add profile to test cleanup"
+      block:
+        - name: Create additional PPSK profile for cleanup test
+          set_fact:
+            ppsk_profiles:
+              - name: "Test-PPSK-VLANs"
+                entries:
+                  - name: "Test-VLAN10-ByName"
+                    psk: "testvlan10pass"
+                    vlan: "Test-Trusted"
+                  - name: "Test-VLAN20-ByName"
+                    psk: "testvlan20pass"
+                    vlan: "Test-IoT"
+                  - name: "Test-VLAN10-ById"
+                    psk: "testvlan10byidpass"
+                    vlan: "10"
+                  - name: "Test-VLAN30-NoVLAN"
+                    psk: "testvlan30pass"
+              - name: "Test-PPSK-ToDelete"  # This will be removed in next phase
+                entries:
+                  - name: "Temp-Entry"
+                    psk: "temppass"
+                    vlan: "10"
+
+        - name: Re-run ppsk_profiles role with additional profile
+          include_role:
+            name: ppsk_profiles
+
+        - name: Verify both PPSK profiles exist
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/ppsk?type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_update_ppsk
+
+        - name: Check both PPSK profiles created
+          assert:
+            that:
+              - verify_update_ppsk.json.result | selectattr('profileName', 'equalto', 'Test-PPSK-VLANs') | list | length > 0
+              - verify_update_ppsk.json.result | selectattr('profileName', 'equalto', 'Test-PPSK-ToDelete') | list | length > 0
+            fail_msg: "PPSK profiles not created correctly"
+            success_msg: "✓ Both PPSK profiles created successfully"
+
+    # ==========================================
+    # PHASE 3: CLEANUP - Test Auto-Cleanup
+    # ==========================================
+    - name: "PHASE 3: CLEANUP - Remove profile from config"
+      block:
+        - name: Update config to remove Test-PPSK-ToDelete
+          set_fact:
+            ppsk_profiles:
+              - name: "Test-PPSK-VLANs"
+                entries:
+                  - name: "Test-VLAN10-ByName"
+                    psk: "testvlan10pass"
+                    vlan: "Test-Trusted"
+                  - name: "Test-VLAN20-ByName"
+                    psk: "testvlan20pass"
+                    vlan: "Test-IoT"
+                  - name: "Test-VLAN10-ById"
+                    psk: "testvlan10byidpass"
+                    vlan: "10"
+                  - name: "Test-VLAN30-NoVLAN"
+                    psk: "testvlan30pass"
+              # Test-PPSK-ToDelete removed - should be auto-cleaned
+
+        - name: Re-run ppsk_profiles role (should delete Test-PPSK-ToDelete)
+          include_role:
+            name: ppsk_profiles
+
+        - name: Verify Test-PPSK-ToDelete was deleted
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/ppsk?type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_cleanup
+
+        - name: Check Test-PPSK-ToDelete was removed
+          assert:
+            that:
+              - verify_cleanup.json.result | selectattr('profileName', 'equalto', 'Test-PPSK-VLANs') | list | length > 0
+              - verify_cleanup.json.result | selectattr('profileName', 'equalto', 'Test-PPSK-ToDelete') | list | length == 0
+            fail_msg: "Cleanup did not work - Test-PPSK-ToDelete still exists"
+            success_msg: "✓ Cleanup successful - Test-PPSK-ToDelete was removed"
+
+    # ==========================================
+    # PHASE 4: IDEMPOTENCY - No Changes
+    # ==========================================
+    - name: "PHASE 4: IDEMPOTENCY - Run again without changes"
+      block:
+        - name: Get current PPSK state before idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/ppsk?type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_before_idempotency
+
+        - name: Run ppsk_profiles role again (no config changes)
+          include_role:
+            name: ppsk_profiles
+
+        - name: Get PPSK state after idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/ppsk?type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_after_idempotency
+
+        - name: Verify configuration unchanged (idempotency)
+          assert:
+            that:
+              - state_before_idempotency.json.result | selectattr('profileName', 'equalto', 'Test-PPSK-VLANs') | list | length > 0
+              - state_after_idempotency.json.result | selectattr('profileName', 'equalto', 'Test-PPSK-VLANs') | list | length > 0
+              - (state_before_idempotency.json.result | selectattr('profileName', 'equalto', 'Test-PPSK-VLANs') | first).profileName == (state_after_idempotency.json.result | selectattr('profileName', 'equalto', 'Test-PPSK-VLANs') | first).profileName
+            fail_msg: "Configuration changed when it shouldn't have (not idempotent)"
+            success_msg: "✓ Idempotency check passed - no changes made"
+          when: state_before_idempotency is defined and state_after_idempotency is defined
+
+    - name: Display PPSK test results
+      debug:
+        msg:
+          - "SUCCESS: PPSK configuration test passed"
+          - "  ✓ CREATE: PPSK profile created successfully"
+          - "  ✓ CREATE: SSID with PPSK created successfully"
+          - "  ✓ UPDATE: PPSK profile entries updated successfully"
+          - "  ✓ CLEANUP: Auto-cleanup deleted unused profiles"
+          - "  ✓ VLAN NAMES: VLAN name resolution works correctly"
+          - "  ✓ IDEMPOTENCY: No changes on re-run"

@@ -1,0 +1,146 @@
+---
+# Ensure a single WireGuard peer exists with correct configuration
+# Called per peer from ensure_wg_server.yml
+# Requires _current_server_id to be set by the calling task
+
+- name: Fetch existing WireGuard peers for all servers
+  uri:
+    url: "{{ omada_api_base }}/setting/wireguard/peer?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: _wg_all_peers_resp
+  changed_when: false
+  tags: [wireguard]
+
+- name: Build list of existing peers
+  set_fact:
+    _wg_all_peers: "{{ _wg_all_peers_resp.json.result.data | default(_wg_all_peers_resp.json.data | default([])) }}"
+  tags: [wireguard]
+
+- name: Find existing peer by name and server ID
+  set_fact:
+    _existing_wg_peer: >-
+      {{
+        _wg_all_peers
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', wg_peer_item.name)
+        | selectattr('interfaceId', 'defined')
+        | selectattr('interfaceId', 'equalto', _current_server_id)
+        | list
+        | first
+        | default('')
+      }}
+  tags: [wireguard]
+
+- name: Debug existing WireGuard peer match for {{ wg_peer_item.name }}
+  debug:
+    msg: "Existing WireGuard peer '{{ wg_peer_item.name }}': {{ 'Found' if _existing_wg_peer != '' else 'Not found' }}"
+  when: omada_api_debug | default(false)
+  tags: [wireguard]
+
+- name: Build WireGuard peer configuration
+  set_fact:
+    _wg_peer_config:
+      name: "{{ wg_peer_item.name }}"
+      interfaceId: "{{ _current_server_id }}"
+      publicKey: "{{ wg_peer_item.public_key }}"
+      allowAddress: "{{ wg_peer_item.allowed_ips }}"
+      keepAlive: "{{ wg_peer_item.keepalive | default(25) }}"
+      status: "{{ wg_peer_item.enabled | default(true) }}"
+  tags: [wireguard]
+
+- name: Debug WireGuard peer config to be sent
+  debug:
+    var: _wg_peer_config
+  when: omada_api_debug | default(false)
+  tags: [wireguard]
+
+- name: Create WireGuard peer {{ wg_peer_item.name }} if it doesn't exist
+  uri:
+    url: "{{ omada_api_base }}/setting/wireguard/peer"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _wg_peer_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 201]
+    return_content: true
+  register: _create_wg_peer_result
+  when: _existing_wg_peer == '' or _existing_wg_peer is none
+  changed_when: _create_wg_peer_result.status in [200, 201] and (_create_wg_peer_result.json.errorCode | default(1)) == 0
+  failed_when: _create_wg_peer_result.status not in [200, 201] or (_create_wg_peer_result.json.errorCode | default(1)) != 0
+  tags: [wireguard]
+
+- name: Update WireGuard peer {{ wg_peer_item.name }} if it exists
+  uri:
+    url: "{{ omada_api_base }}/setting/wireguard/peer/{{ _existing_wg_peer.id }}"
+    method: PUT
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _wg_peer_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  register: _update_wg_peer_result
+  when: _existing_wg_peer != '' and _existing_wg_peer is not none
+  changed_when: _update_wg_peer_result.status in [200, 204] and (_update_wg_peer_result.json.errorCode | default(0)) == 0
+  failed_when: _update_wg_peer_result.status not in [200, 204] or (_update_wg_peer_result.json.errorCode | default(1)) != 0
+  tags: [wireguard]
+
+- name: Debug WireGuard peer operation result
+  debug:
+    msg:
+      - "WireGuard peer '{{ wg_peer_item.name }}': {{ 'Created' if _create_wg_peer_result is defined and _create_wg_peer_result.changed else 'Updated' if _update_wg_peer_result is defined and _update_wg_peer_result.changed else 'No changes' }}"
+  when: omada_api_debug | default(false)
+  tags: [wireguard]
+
+- name: Find peers to clean up for this server (not in playbook config)
+  set_fact:
+    _wg_peers_to_delete: >-
+      {{
+        _wg_all_peers
+        | selectattr('interfaceId', 'defined')
+        | selectattr('interfaceId', 'equalto', _current_server_id)
+        | rejectattr('name', 'in', wg_server_item.peers | default([]) | map(attribute='name') | list)
+        | list
+      }}
+  when: omada_auto_cleanup | default(false)
+  tags: [wireguard, cleanup]
+
+- name: Warning about WireGuard peers to be deleted
+  debug:
+    msg:
+      - "WARNING: Auto-cleanup is enabled!"
+      - "The following WireGuard peers will be DELETED from server '{{ wg_server_item.name }}':"
+      - "{{ _wg_peers_to_delete | map(attribute='name') | list | join(', ') }}"
+  when: omada_auto_cleanup | default(false)  and (_wg_peers_to_delete | default([]) | length > 0)
+  tags: [wireguard, cleanup]
+
+- name: Delete WireGuard peers not defined in playbook (auto-cleanup)
+  uri:
+    url: "{{ omada_api_base }}/setting/wireguard/peer/{{ item.id }}"
+    method: DELETE
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  loop: "{{ _wg_peers_to_delete | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _delete_wg_peer_results
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _delete_wg_peer_results is succeeded
+  when: omada_auto_cleanup | default(false)  and (_wg_peers_to_delete | default([]) | length > 0)
+  changed_when: _delete_wg_peer_results.status in [200, 204]
+  failed_when: _delete_wg_peer_results.status not in [200, 204]
+  tags: [wireguard, cleanup]
+
+- name: Summary of peer cleanup operations
+  debug:
+    msg: "Deleted {{ _wg_peers_to_delete | default([]) | length }} WireGuard peer(s) from server '{{ wg_server_item.name }}'"
+  when: omada_auto_cleanup | default(false)  and (_wg_peers_to_delete | default([]) | length > 0)
+  tags: [wireguard, cleanup]

@@ -1,0 +1,265 @@
+---
+# Process a single SSID configuration
+# Called from main.yml with loop_var: ssid_item
+
+- name: Find existing SSID by name
+  set_fact:
+    _existing_ssid: >-
+      {{
+        omada_ssids_existing | default([])
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', ssid_item.name)
+        | list
+        | first
+        | default('')
+      }}
+  tags: [wifi]
+
+- name: Debug existing SSID match
+  debug:
+    msg: "Existing SSID for '{{ ssid_item.name }}': {{ 'Found' if _existing_ssid != '' else 'Not found' }}"
+  tags: [wifi]
+
+- name: Determine security mode value
+  set_fact:
+    _security_value: >-
+      {{
+        4 if (ssid_item.ppsk_profile is defined and ssid_item.ppsk_profile != '')
+        else (3 if ssid_item.security | lower in ['wpa2_personal', 'wpa3_personal', 'wpa2_wpa3_personal', 'wpa2-personal', 'wpa3-personal', 'wpa2-wpa3-personal']
+        else 3)
+      }}
+  tags: [wifi]
+
+- name: Check if SSID should be skipped (PPSK profile unavailable)
+  set_fact:
+    _skip_ssid: >-
+      {{
+        (ssid_item.ppsk_profile is defined and ssid_item.ppsk_profile != '' and omada_ppsk_profile_map is not defined)
+      }}
+  tags: [wifi]
+
+- name: Warning when skipping PPSK SSID
+  debug:
+    msg: |
+      Skipping SSID '{{ ssid_item.name }}' - requires PPSK profile '{{ ssid_item.ppsk_profile }}'
+      but PPSK profiles could not be loaded (may not be supported on this controller).
+      To create this SSID, run: ./ansible-apply.sh --tags ppsk,wifi
+  when: _skip_ssid | default(false)
+  tags: [wifi]
+
+- name: Resolve PPSK profile ID from name if PPSK is used
+  set_fact:
+    _ppsk_profile_id: "{{ omada_ppsk_profile_map[ssid_item.ppsk_profile] | default('') }}"
+  when:
+    - not (_skip_ssid | default(false))
+    - ssid_item.ppsk_profile is defined
+    - ssid_item.ppsk_profile != ''
+    - omada_ppsk_profile_map is defined
+  tags: [wifi]
+
+- name: Fail if PPSK profile not found in available profiles
+  fail:
+    msg: "PPSK profile '{{ ssid_item.ppsk_profile }}' not found. Available profiles: {{ omada_ppsk_profile_map.keys() | list | join(', ') }}"
+  when:
+    - not (_skip_ssid | default(false))
+    - ssid_item.ppsk_profile is defined
+    - ssid_item.ppsk_profile != ''
+    - omada_ppsk_profile_map is defined
+    - (_ppsk_profile_id is not defined or _ppsk_profile_id == '')
+  tags: [wifi]
+
+- name: Determine WiFi band (PPSK doesn't support 6GHz)
+  set_fact:
+    _wifi_band: >-
+      {{
+        3 if (ssid_item.ppsk_profile is defined and ssid_item.ppsk_profile != '')
+        else 7
+      }}
+  when: not (_skip_ssid | default(false))
+  tags: [wifi]
+
+- name: Fetch rate limit profiles
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/rateLimit?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_ratelimit_resp
+  changed_when: false
+  failed_when: false
+  when: not (_skip_ssid | default(false))
+  tags: [wifi]
+
+- name: Get default rate limit ID
+  set_fact:
+    _rate_limit_id: "{{ omada_ratelimit_resp.json.result.data[0].id if (omada_ratelimit_resp.json.result.data | default([]) | length > 0) else omada_ratelimit_resp.json.data[0].id if (omada_ratelimit_resp.json.data | default([]) | length > 0) else '' }}"
+  when: omada_ratelimit_resp.status == 200
+  tags: [wifi]
+
+- name: Fetch networks for VLAN resolution (for non-MAC-based SSIDs)
+  uri:
+    url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_networks_for_wifi
+  changed_when: false
+  when:
+    - not (_skip_ssid | default(false))
+    - ssid_item.vlan is defined
+    - ssid_item.mac_based_vlan | default(false) == false
+  tags: [wifi]
+
+- name: Build VLAN to network ID mapping (for non-MAC-based SSIDs)
+  set_fact:
+    _vlan_to_network_map: "{{ dict(omada_networks_for_wifi.json.result.data | default(omada_networks_for_wifi.json.data | default([])) | selectattr('vlan', 'defined') | map(attribute='vlan') | map('string') | zip(omada_networks_for_wifi.json.result.data | default(omada_networks_for_wifi.json.data | default([])) | selectattr('vlan', 'defined') | map(attribute='id'))) }}"
+  when: ssid_item.vlan is defined and omada_networks_for_wifi is defined and (ssid_item.mac_based_vlan | default(false) == false)
+  tags: [wifi]
+
+- name: Resolve VLAN network ID from mapping (for non-MAC-based SSIDs)
+  set_fact:
+    _vlan_network_id: "{{ _vlan_to_network_map[ssid_item.vlan | string] | default('') }}"
+  when: ssid_item.vlan is defined and _vlan_to_network_map is defined and (ssid_item.mac_based_vlan | default(false) == false)
+  tags: [wifi]
+
+- name: Build VLAN setting with network ID mapping
+  set_fact:
+    _vlan_setting: >-
+      {{
+        {
+          'mode': 1,
+          'customConfig': {
+            'customMode': 0,
+            'lanNetworkVlanIds': {
+              _vlan_network_id: [ssid_item.vlan | int]
+            }
+          }
+        } if (ssid_item.vlan is defined and _vlan_network_id is defined and _vlan_network_id != '')
+        else {'mode': 0}
+      }}
+  tags: [wifi]
+
+- name: Build PSK setting for non-PPSK SSIDs
+  set_fact:
+    _psk_setting:
+      securityKey: "{{ ssid_item.password }}"
+      encryptionPsk: 3
+      versionPsk: 4
+      gikRekeyPskEnable: false
+  when: ssid_item.ppsk_profile is not defined or ssid_item.ppsk_profile == ''
+  tags: [wifi]
+
+- name: Build PSK setting for PPSK SSIDs (no securityKey)
+  set_fact:
+    _psk_setting:
+      encryptionPsk: 3
+      versionPsk: 2
+      gikRekeyPskEnable: false
+  when: ssid_item.ppsk_profile is defined and ssid_item.ppsk_profile != ''
+  tags: [wifi]
+
+- name: Build PPSK setting when PPSK profile is used
+  set_fact:
+    _ppsk_setting:
+      ppskProfileId: "{{ _ppsk_profile_id }}"
+      macFormat: 2
+      type: 0
+  when: ssid_item.ppsk_profile is defined and ssid_item.ppsk_profile != ''
+  tags: [wifi]
+
+- name: Build base SSID configuration
+  set_fact:
+    _ssid_config_base:
+      name: "{{ ssid_item.name }}"
+      band: "{{ _wifi_band }}"
+      enable: "{{ ssid_item.enabled | default(true) }}"
+      guestNetEnable: "{{ ssid_item.guest_network | default(true if (ssid_item.ppsk_profile is defined and ssid_item.ppsk_profile != '') else false) }}"
+      security: "{{ _security_value }}"
+      broadcast: "{{ ssid_item.broadcast_ssid | default(true) }}"
+      vlanSetting: "{{ _vlan_setting }}"
+      pskSetting: "{{ _psk_setting }}"
+      rateLimit:
+        downLimitEnable: false
+        upLimitEnable: false
+      ssidRateLimit:
+        downLimitEnable: false
+        upLimitEnable: false
+      wlanScheduleEnable: false
+      rateAndBeaconCtrl:
+        rate2gCtrlEnable: false
+        rate5gCtrlEnable: false
+        rate6gCtrlEnable: false
+      macFilterEnable: false
+      wlanId: ""
+      enable11r: false
+      pmfMode: "{{ 3 if (ssid_item.ppsk_profile is defined and ssid_item.ppsk_profile != '') else 2 }}"
+      multiCastSetting:
+        multiCastEnable: true
+        arpCastEnable: true
+        filterEnable: false
+        ipv6CastEnable: true
+        channelUtil: 100
+      greEnable: false
+      prohibitWifiShare: false
+      mloEnable: false
+  tags: [wifi]
+
+- name: Add PPSK setting to SSID config when PPSK is used
+  set_fact:
+    _ssid_config: "{{ _ssid_config_base | combine({'ppskSetting': _ppsk_setting}) }}"
+  when: ssid_item.ppsk_profile is defined and ssid_item.ppsk_profile != ''
+  tags: [wifi]
+
+- name: Use base configuration as final SSID config (non-PPSK)
+  set_fact:
+    _ssid_config: "{{ _ssid_config_base }}"
+  when: ssid_item.ppsk_profile is not defined or ssid_item.ppsk_profile == ''
+  tags: [wifi]
+
+- name: Create SSID if it doesn't exist
+  uri:
+    url: "{{ omada_api_base }}/setting/wlans/{{ _wlan_profile_id }}/ssids"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _ssid_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 201]
+    return_content: true
+  register: _create_ssid_result
+  when:
+    - not (_skip_ssid | default(false))
+    - _wlan_profile_id != ''
+    - _existing_ssid == '' or _existing_ssid is none
+  changed_when: _create_ssid_result.status in [200, 201] and (_create_ssid_result.json.errorCode | default(1)) == 0
+  failed_when: _create_ssid_result.status not in [200, 201] or (_create_ssid_result.json.errorCode | default(1)) != 0
+  tags: [wifi]
+
+- name: Update SSID if it exists
+  uri:
+    url: "{{ omada_api_base }}/setting/wlans/{{ _wlan_profile_id }}/ssids/{{ _existing_ssid.id }}"
+    method: PATCH
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _ssid_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  register: _update_ssid_result
+  when:
+    - not (_skip_ssid | default(false))
+    - _wlan_profile_id != ''
+    - _existing_ssid != ''
+    - _existing_ssid is not none
+  changed_when: _update_ssid_result.status in [200, 204] and (_update_ssid_result.json.errorCode | default(0)) == 0
+  failed_when: _update_ssid_result.status not in [200, 204] or (_update_ssid_result.json.errorCode | default(1)) != 0
+  tags: [wifi]
+
+- name: Summary of WiFi configuration
+  debug:
+    msg: "SSID '{{ ssid_item.name }}': {{ 'skipped (PPSK profile unavailable)' if _skip_ssid | default(false) else 'created' if _create_ssid_result is defined and _create_ssid_result.changed else 'updated' if _update_ssid_result is defined and _update_ssid_result.changed else 'no changes' }}"
+  tags: [wifi]

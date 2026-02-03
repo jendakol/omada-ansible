@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Network Configuration",
+  "description": "Schema for VLAN and network settings",
+  "type": "object",
+  "required": ["vlans"],
+  "properties": {
+    "vlans": {
+      "type": "array",
+      "description": "List of VLANs/networks",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "subnet"],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4094,
+            "description": "VLAN ID (1-4094)"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "VLAN name"
+          },
+          "subnet": {
+            "type": "string",
+            "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(\\d|[1-2]\\d|3[0-2])$",
+            "description": "Subnet in CIDR notation (e.g., '192.168.10.0/24' or '192.168.10.1/24' - both work, converted to gatewaySubnet '192.168.10.1/24' in API)"
+          },
+          "dhcp_enabled": {
+            "type": "boolean",
+            "description": "Enable DHCP server (default: true)"
+          },
+          "dhcp_range_start": {
+            "type": "string",
+            "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$",
+            "description": "DHCP range start IP (default: .1)"
+          },
+          "dhcp_range_end": {
+            "type": "string",
+            "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$",
+            "description": "DHCP range end IP (default: .254)"
+          },
+          "dns_servers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
+            },
+            "description": "DNS servers (optional, uses auto DNS if not specified)"
+          },
+          "domain": {
+            "type": "string",
+            "description": "Domain name (optional)"
+          },
+          "lease_time": {
+            "type": "integer",
+            "minimum": 60,
+            "description": "DHCP lease time in minutes (default: 120)"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+---
+# Test WiFi Configuration
+
+wifi_ssids:
+  # Regular SSID with standard WPA2
+  - name: "Test-SSID"
+    security: "wpa2_personal"
+    password: "TestPassphrase123!"
+    enabled: true
+    broadcast_ssid: true
+    guest_network: false
+    vlan: 10  # Use regular VLAN assignment for now
+
+  # SSID with PPSK (different passwords for different VLANs)
+  - name: "Test-PPSK-SSID"
+    ppsk_profile: "Test-PPSK-VLANs"
+    enabled: true
+    broadcast_ssid: true
+    guest_network: true
+    # No password field needed - passwords come from PPSK profile
+    # No vlan field needed - VLANs assigned per password

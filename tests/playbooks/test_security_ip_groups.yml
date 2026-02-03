@@ -1,0 +1,185 @@
+---
+# Test 5: IP Groups
+# Verifies CREATE, UPDATE, and IDEMPOTENCY
+
+- name: Test IP Groups
+  hosts: omada-controller
+  connection: local
+  gather_facts: false
+  vars:
+    omada_api_debug: true
+
+  tasks:
+    # ==========================================
+    # PHASE 1: CREATE - Initial Configuration
+    # ==========================================
+    - name: "PHASE 1: CREATE - Create IP group and IP-Port group with initial IPs"
+      block:
+        - name: Include omada_controller role
+          include_role:
+            name: omada_controller
+
+        - name: Include ip_groups role (initial config)
+          include_role:
+            name: ip_groups
+
+        - name: Verify IP group was created
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/groups?type=0&currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_create
+
+        - name: Verify IP-Port group was created
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/groups?type=1&currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_create_ip_port
+
+        - name: Check Test-Group-1 created
+          assert:
+            that:
+              - (verify_create.json.result.data | default(verify_create.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Group-1') | list | length > 0
+            fail_msg: "Test-Group-1 not created"
+            success_msg: "✓ Test-Group-1 created successfully"
+
+        - name: Check Test-IP-Port-Group created
+          assert:
+            that:
+              - (verify_create_ip_port.json.result.data | default(verify_create_ip_port.json.data | default([]))) | selectattr('name', 'equalto', 'Test-IP-Port-Group') | list | length > 0
+            fail_msg: "Test-IP-Port-Group not created"
+            success_msg: "✓ Test-IP-Port-Group created successfully"
+
+    # ==========================================
+    # PHASE 2: UPDATE - Add IP addresses
+    # ==========================================
+    - name: "PHASE 2: UPDATE - Add IP addresses and ports to groups"
+      block:
+        - name: Update IP group configuration (add more IPs)
+          set_fact:
+            ip_groups:
+              - name: "Test-Group-1"
+                description: "Test IP group 1"
+                addresses:
+                  - "192.168.10.10/32"
+                  - "192.168.10.20/32"
+                  - "192.168.10.30/32"  # Added new IP
+                  - "192.168.10.40/32"  # Added new IP
+
+              - name: "Test-Group-2"
+                description: "Test IP group 2"
+                addresses:
+                  - "192.168.20.10/32"
+                  - "192.168.20.20/32"
+
+            ip_port_groups:
+              - name: "Test-IP-Port-Group"
+                description: "Test IP-Port group updated"
+                devices:
+                  - test-device-1
+                  - test-device-2
+                ports:
+                  - 53
+                  - 80
+                  - 443  # Added new port
+
+              - name: "Test-IP-Port-Direct"
+                description: "Test IP-Port group with direct addresses"
+                addresses:
+                  - "192.168.10.100/32"
+                ports:
+                  - 443
+                  - 8080
+
+        - name: Re-run ip_groups role with updated config
+          include_role:
+            name: ip_groups
+
+        - name: Verify IP group was updated
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/groups?type=0&currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_update
+
+        - name: Verify IP-Port group was updated
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/groups?type=1&currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_update_ip_port
+
+        - name: Check Test-Group-1 has more IPs
+          assert:
+            that:
+              - (verify_update.json.result.data | default(verify_update.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Group-1') | list | length > 0
+              - ((verify_update.json.result.data | default(verify_update.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Group-1') | first).ipList | length >= 4
+            fail_msg: "Test-Group-1 not updated with additional IPs"
+            success_msg: "✓ Test-Group-1 updated with additional IPs"
+
+        - name: Check Test-IP-Port-Group has more ports
+          assert:
+            that:
+              - (verify_update_ip_port.json.result.data | default(verify_update_ip_port.json.data | default([]))) | selectattr('name', 'equalto', 'Test-IP-Port-Group') | list | length > 0
+              - ((verify_update_ip_port.json.result.data | default(verify_update_ip_port.json.data | default([]))) | selectattr('name', 'equalto', 'Test-IP-Port-Group') | first).portList | length >= 3
+            fail_msg: "Test-IP-Port-Group not updated with additional ports"
+            success_msg: "✓ Test-IP-Port-Group updated with additional ports"
+
+    # ==========================================
+    # PHASE 3: IDEMPOTENCY - No Changes
+    # ==========================================
+    - name: "PHASE 3: IDEMPOTENCY - Run again without changes"
+      block:
+        - name: Get current IP groups state before idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/groups?type=0&currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_before_idempotency
+
+        - name: Run ip_groups role again (no config changes)
+          include_role:
+            name: ip_groups
+
+        - name: Get IP groups state after idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/groups?type=0&currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_after_idempotency
+
+        - name: Verify configuration unchanged (idempotency)
+          assert:
+            that:
+              - (state_before_idempotency.json.result.data | default(state_before_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Group-1') | list | length > 0
+              - (state_after_idempotency.json.result.data | default(state_after_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Group-1') | list | length > 0
+              - ((state_before_idempotency.json.result.data | default(state_before_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Group-1') | first).ipList | length == ((state_after_idempotency.json.result.data | default(state_after_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Group-1') | first).ipList | length
+            fail_msg: "Configuration changed when it shouldn't have (not idempotent)"
+            success_msg: "✓ Idempotency check passed - no changes made"
+
+    - name: Display IP Groups test results
+      debug:
+        msg:
+          - "SUCCESS: IP Groups and IP-Port Groups test passed"
+          - "  ✓ CREATE: IP groups and IP-Port groups created successfully"
+          - "  ✓ UPDATE: IP addresses and ports added successfully"
+          - "  ✓ IDEMPOTENCY: No changes on re-run"

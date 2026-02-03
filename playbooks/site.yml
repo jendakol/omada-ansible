@@ -1,0 +1,32 @@
+---
+- name: Configure Omada SDN environment
+  hosts: controller
+  connection: local
+  gather_facts: false
+  # Group vars are automatically loaded from inventories/production/group_vars/all/
+  # This includes vault.yml if present (vault is optional)
+  vars:
+    omada_api_check_mode: "{{ ansible_check_mode | default(false) }}"
+    omada_api_enforce: false
+    omada_api_debug: true
+  roles:
+    - role: omada_controller
+      tags: always  # Always run authentication, needed by all other roles
+    - role: vlans
+      tags: [vlans]
+    - role: dhcp_reservations
+      tags: [dhcp]
+    - role: ppsk_profiles
+      tags: [ppsk]
+    - role: wifi
+      tags: [wifi]
+    - role: ip_groups
+      tags: [ip_groups]
+    - role: firewall_policies
+      tags: [firewall]
+    - role: multicast_services
+      tags: [multicast]
+    - role: wireguard
+      tags: [wireguard]
+    - role: port_forward
+      tags: [port_forward]

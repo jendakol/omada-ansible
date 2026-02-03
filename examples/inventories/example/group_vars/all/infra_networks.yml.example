@@ -1,0 +1,69 @@
+---
+# Network/VLAN Configuration
+#
+# Define your network segments (VLANs) with DHCP settings.
+# Each VLAN creates an isolated network segment.
+
+vlans:
+  # Trusted Network - For trusted devices (computers, phones)
+  - id: 10
+    name: "Trusted"
+    subnet: "192.168.10.0/24"
+    gateway: "192.168.10.1"
+    dhcp_enabled: true
+    dhcp_range_start: "192.168.10.50"   # First IP in DHCP pool
+    dhcp_range_end: "192.168.10.200"    # Last IP in DHCP pool
+    dns_servers:
+      - "8.8.8.8"
+      - "8.8.4.4"
+    domain: "home.local"
+    lease_time: 86400  # 24 hours in seconds
+
+  # IoT Network - For IoT devices with restricted access
+  - id: 20
+    name: "IoT"
+    subnet: "192.168.20.0/24"
+    gateway: "192.168.20.1"
+    dhcp_enabled: true
+    dhcp_range_start: "192.168.20.50"
+    dhcp_range_end: "192.168.20.200"
+    dns_servers:
+      - "8.8.8.8"
+    lease_time: 86400
+
+  # Guest Network - For guests with internet-only access
+  - id: 30
+    name: "Guest"
+    subnet: "192.168.30.0/24"
+    gateway: "192.168.30.1"
+    dhcp_enabled: true
+    dhcp_range_start: "192.168.30.10"
+    dhcp_range_end: "192.168.30.250"
+    dns_servers:
+      - "1.1.1.1"
+      - "1.0.0.1"
+    lease_time: 3600  # 1 hour for guests
+
+# Field Descriptions:
+#
+# id: VLAN ID (1-4094, avoid 1 which is often default)
+# name: Display name in Omada controller
+# subnet: Network address in CIDR notation
+# gateway: Gateway IP (usually first IP in subnet)
+# dhcp_enabled: Enable DHCP server for this network
+# dhcp_range_start: First IP address to assign via DHCP
+# dhcp_range_end: Last IP address to assign via DHCP
+# dns_servers: List of DNS servers to provide to DHCP clients
+# domain: DNS domain name for DHCP clients (optional)
+# lease_time: DHCP lease duration in seconds (optional, default: 86400)
+#
+# Common subnet sizes:
+# /24 = 254 hosts (e.g., 192.168.10.0/24 = .1 to .254)
+# /25 = 126 hosts (e.g., 192.168.10.0/25 = .1 to .126)
+# /26 = 62 hosts  (e.g., 192.168.10.0/26 = .1 to .62)
+
+# Notes:
+# - Reserve .1-.49 for static IPs (servers, printers, APs)
+# - DHCP pool starts at .50 to avoid conflicts
+# - Don't overlap subnets between VLANs
+# - Keep VLAN IDs consistent across switches and APs

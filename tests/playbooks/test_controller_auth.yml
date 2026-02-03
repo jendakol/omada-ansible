@@ -1,0 +1,44 @@
+---
+# Test 1: Controller Authentication
+# Verifies that we can connect to the Omada controller and authenticate
+
+- name: Test Omada Controller Authentication
+  hosts: omada-controller
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../inventories/test/group_vars/all/00_controller.yml"
+  vars:
+    omada_api_debug: true
+
+  tasks:
+    - name: Test authentication
+      block:
+        - name: Include omada_controller role
+          include_role:
+            name: omada_controller
+
+        - name: Verify authentication succeeded
+          assert:
+            that:
+              - omada_api_base is defined
+              - omada_site_id is defined
+              - omada_headers is defined
+            fail_msg: "Authentication failed"
+            success_msg: "Authentication successful"
+
+        - name: Display authentication results
+          debug:
+            msg:
+              - "Controller ID: {{ omada_c_id }}"
+              - "Site ID: {{ omada_site_id }}"
+              - "API Base: {{ omada_api_base }}"
+
+      rescue:
+        - name: Display authentication error
+          debug:
+            msg: "FAILED: Could not authenticate to Omada controller"
+
+        - name: Fail the test
+          fail:
+            msg: "Controller authentication test failed"

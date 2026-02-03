@@ -1,0 +1,99 @@
+---
+# VLAN/Network management via Omada OpenAPI v1
+# Creates and manages network profiles with VLAN configurations
+
+- name: Skip VLAN configuration when no vlans are defined
+  debug:
+    msg: "No VLANs defined - skipping network configuration"
+  when: vlans | default([]) | length == 0
+  tags: [vlans]
+
+- name: Fetch existing networks from controller (API v2)
+  uri:
+    url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_networks_resp
+  changed_when: false
+  failed_when: omada_networks_resp.status != 200 or (omada_networks_resp.json.errorCode | default(1)) != 0
+  tags: [vlans]
+
+- name: Build map of existing networks
+  set_fact:
+    omada_networks_existing: "{{ omada_networks_resp.json.result.data | default(omada_networks_resp.json.data | default([])) }}"
+  tags: [vlans]
+
+- name: Debug existing networks count
+  debug:
+    msg: "Found {{ omada_networks_existing | length }} existing networks"
+  tags: [vlans]
+
+- name: Debug existing networks details
+  debug:
+    var: omada_networks_existing
+  tags: [vlans]
+
+- name: Ensure each VLAN/Network profile
+  include_tasks: ensure_network.yml
+  loop: "{{ vlans }}"
+  loop_control:
+    loop_var: vlan_item
+    label: "VLAN {{ vlan_item.id }} - {{ vlan_item.name }}"
+  tags: [vlans]
+
+- name: Summary of VLAN configuration
+  debug:
+    msg: "Configured {{ vlans | length }} VLAN(s) successfully"
+  tags: [vlans]
+
+- name: Find VLANs to clean up (not in playbook config)
+  set_fact:
+    _vlans_to_delete: >-
+      {{
+        omada_networks_existing | default([])
+        | selectattr('vlan', 'defined')
+        | rejectattr('vlan', 'equalto', 1)
+        | rejectattr('primary', 'equalto', true)
+        | rejectattr('vlan', 'in', vlans | map(attribute='id') | list)
+        | list
+      }}
+  when: omada_auto_cleanup | default(false)
+  tags: [vlans, cleanup]
+
+- name: Warning about VLANs to be deleted
+  debug:
+    msg:
+      - "WARNING: Auto-cleanup is enabled!"
+      - "The following VLANs will be DELETED because they are not in the playbook:"
+      - "{{ _vlans_to_delete | map(attribute='name') | list | join(', ') }} (VLAN IDs: {{ _vlans_to_delete | map(attribute='vlan') | list | join(', ') }})"
+  when: omada_auto_cleanup | default(false) and (_vlans_to_delete | default([]) | length > 0)
+  tags: [vlans, cleanup]
+
+- name: Delete VLANs not defined in playbook (auto-cleanup)
+  uri:
+    url: "{{ omada_api_base }}/setting/lan/networks/{{ item.id }}"
+    method: DELETE
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  loop: "{{ _vlans_to_delete | default([]) }}"
+  loop_control:
+    label: "VLAN {{ item.vlan }} - {{ item.name }}"
+  register: _delete_vlan_results
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _delete_vlan_results is succeeded
+  when: omada_auto_cleanup | default(false) and (_vlans_to_delete | default([]) | length > 0)
+  changed_when: _delete_vlan_results.status in [200, 204]
+  failed_when: _delete_vlan_results.status not in [200, 204]
+  tags: [vlans, cleanup]
+
+- name: Summary of cleanup operations
+  debug:
+    msg: "Deleted {{ _vlans_to_delete | default([]) | length }} VLAN(s) not in playbook configuration"
+  when: omada_auto_cleanup | default(false) and (_vlans_to_delete | default([]) | length > 0)
+  tags: [vlans, cleanup]

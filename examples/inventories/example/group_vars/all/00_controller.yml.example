@@ -1,0 +1,47 @@
+---
+# Omada Controller Connection Settings
+#
+# This file contains the connection details for your Omada SDN controller.
+# All API operations will be performed against this controller.
+
+# Controller URL
+# Format: https://hostname.example.com or https://192.168.1.1:8043
+# - Do not include trailing slash
+# - Must be accessible from where you run Ansible
+# - Default port: 8043 (HTTPS)
+omada_controller_url: "https://controller.example.com"
+
+# Site Name
+# The name of the site in your Omada controller to manage.
+# - Must match exactly as shown in controller UI (case-sensitive)
+# - All configurations will be applied to this site
+# - Leave empty or use "Default" for default site
+omada_site: "Main-Site"
+
+# Authentication
+# Credentials for logging into the Omada controller.
+# - Recommended: Use Ansible Vault to encrypt these values
+# - User must have admin or site admin permissions
+# - See README.md for vault encryption instructions
+omada_username: "{{ vault_omada_username }}"
+omada_password: "{{ vault_omada_password }}"
+
+# SSL Certificate Verification
+# Whether to verify the controller's SSL certificate.
+# - true: Verify certificate (recommended for production)
+# - false: Skip verification (useful for self-signed certs in testing)
+verify_ssl: true
+
+# Auto-cleanup Mode
+# Whether to automatically delete resources not defined in your config.
+# - true: Resources not in your YAML will be deleted (dangerous!)
+# - false: Only create/update resources, never delete (recommended)
+# WARNING: Only enable if you want Ansible to manage ALL resources
+omada_auto_cleanup: false
+
+# API Debug Mode
+# Enable verbose logging of all API calls.
+# - true: Log all API requests/responses (verbose)
+# - false: Normal logging (recommended)
+# Useful for troubleshooting but exposes sensitive data in logs
+omada_api_debug: false

@@ -1,0 +1,132 @@
+---
+# Test 8: Port Forwarding
+# Verifies CREATE, UPDATE, and IDEMPOTENCY
+
+- name: Test Port Forwarding
+  hosts: omada-controller
+  connection: local
+  gather_facts: false
+  vars:
+    omada_api_debug: true
+
+  tasks:
+    # ==========================================
+    # PHASE 1: CREATE - Initial Configuration
+    # ==========================================
+    - name: "PHASE 1: CREATE - Create port forwarding rule"
+      block:
+        - name: Include omada_controller role
+          include_role:
+            name: omada_controller
+
+        - name: Include vlans role (required for DHCP)
+          include_role:
+            name: vlans
+
+        - name: Include dhcp_reservations role (required for device IP mapping)
+          include_role:
+            name: dhcp_reservations
+
+        - name: Include port_forward role (initial config)
+          include_role:
+            name: port_forward
+
+        - name: Verify port forwarding rule was created
+          uri:
+            url: "{{ omada_api_base }}/setting/transmission/portForwardings?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_create
+
+        - name: Check Test-Port-Forward created
+          assert:
+            that:
+              - (verify_create.json.result.data | default(verify_create.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Port-Forward') | list | length > 0
+            fail_msg: "Test-Port-Forward not created"
+            success_msg: "✓ Test-Port-Forward created successfully"
+
+    # ==========================================
+    # PHASE 2: UPDATE - Change port numbers
+    # ==========================================
+    - name: "PHASE 2: UPDATE - Change external port number"
+      block:
+        - name: Update port forward configuration (change external port)
+          set_fact:
+            port_forward_rules:
+              - name: "Test-Port-Forward"
+                enabled: true
+                external_port: "8090"  # Changed from 8080
+                protocol: tcp
+                forward_device: "test-device-1"  # Resolves to 192.168.10.100
+                forward_port: "80"
+
+        - name: Re-run port_forward role with updated config
+          include_role:
+            name: port_forward
+
+        - name: Verify port forwarding rule was updated
+          uri:
+            url: "{{ omada_api_base }}/setting/transmission/portForwardings?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_update
+
+        - name: Check Test-Port-Forward port changed
+          assert:
+            that:
+              - (verify_update.json.result.data | default(verify_update.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Port-Forward') | list | length > 0
+              - ((verify_update.json.result.data | default(verify_update.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Port-Forward') | first).externalPort == '8090'
+            fail_msg: "Test-Port-Forward port not updated correctly"
+            success_msg: "✓ Test-Port-Forward port updated successfully"
+
+    # ==========================================
+    # PHASE 3: IDEMPOTENCY - No Changes
+    # ==========================================
+    - name: "PHASE 3: IDEMPOTENCY - Run again without changes"
+      block:
+        - name: Get current port forward state before idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/transmission/portForwardings?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_before_idempotency
+
+        - name: Run port_forward role again (no config changes)
+          include_role:
+            name: port_forward
+
+        - name: Get port forward state after idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/transmission/portForwardings?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_after_idempotency
+
+        - name: Verify configuration unchanged (idempotency)
+          assert:
+            that:
+              - (state_before_idempotency.json.result.data | default(state_before_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Port-Forward') | list | length > 0
+              - (state_after_idempotency.json.result.data | default(state_after_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Port-Forward') | list | length > 0
+              - ((state_before_idempotency.json.result.data | default(state_before_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Port-Forward') | first).externalPort == ((state_after_idempotency.json.result.data | default(state_after_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Port-Forward') | first).externalPort
+            fail_msg: "Configuration changed when it shouldn't have (not idempotent)"
+            success_msg: "✓ Idempotency check passed - no changes made"
+
+    - name: Display Port Forward test results
+      debug:
+        msg:
+          - "SUCCESS: Port forwarding test passed"
+          - "  ✓ CREATE: Port forwarding rule created successfully"
+          - "  ✓ UPDATE: External port changed successfully"
+          - "  ✓ IDEMPOTENCY: No changes on re-run"

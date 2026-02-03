@@ -1,0 +1,187 @@
+---
+# WiFi SSID/WLAN configuration via Omada Controller API
+# Creates and manages wireless networks
+
+- name: Skip Wi-Fi configuration when wifi_ssids is not defined
+  debug:
+    msg: "No WiFi configuration defined - skipping WLAN setup"
+  when: wifi_ssids is not defined or (wifi_ssids | length == 0)
+  tags: [wifi]
+
+- name: Fetch existing WLAN profiles from controller
+  uri:
+    url: "{{ omada_api_base }}/setting/wlans?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_wlans_resp
+  changed_when: false
+  failed_when: omada_wlans_resp.status != 200 or (omada_wlans_resp.json.errorCode | default(1)) != 0
+  when: wifi_ssids is defined and (wifi_ssids | length > 0)
+  tags: [wifi]
+
+- name: Build map of existing WLAN profiles
+  set_fact:
+    omada_wlans_existing: "{{ omada_wlans_resp.json.result.data | default(omada_wlans_resp.json.data | default([])) }}"
+  when: wifi_ssids is defined and (wifi_ssids | length > 0)
+  tags: [wifi]
+
+- name: Debug existing WLANs
+  debug:
+    msg: "Found {{ omada_wlans_existing | length }} existing WLAN profiles"
+  when: wifi_ssids is defined and (wifi_ssids | length > 0)
+  tags: [wifi]
+
+- name: Use first WLAN profile or get default
+  set_fact:
+    _wlan_profile_id: "{{ omada_wlans_existing[0].id if omada_wlans_existing | length > 0 else '' }}"
+  when: wifi_ssids is defined and (wifi_ssids | length > 0)
+  tags: [wifi]
+
+- name: Debug WLAN profile ID
+  debug:
+    msg: "Using WLAN profile ID: {{ _wlan_profile_id }}"
+  when: wifi_ssids is defined and (wifi_ssids | length > 0)
+  tags: [wifi]
+
+- name: Fetch existing SSIDs from WLAN profile
+  uri:
+    url: "{{ omada_api_base }}/setting/wlans/{{ _wlan_profile_id }}/ssids?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_ssids_resp
+  changed_when: false
+  when: wifi_ssids is defined and (wifi_ssids | length > 0) and _wlan_profile_id != ''
+  tags: [wifi]
+
+- name: Build map of existing SSIDs
+  set_fact:
+    omada_ssids_existing: "{{ omada_ssids_resp.json.result.data | default(omada_ssids_resp.json.data | default([])) }}"
+  when: wifi_ssids is defined and (wifi_ssids | length > 0) and omada_ssids_resp is defined
+  tags: [wifi]
+
+# ============================================
+# PPSK Profile Resolution (if needed by SSIDs)
+# ============================================
+
+- name: Check if any SSID uses PPSK profiles
+  set_fact:
+    _wifi_needs_ppsk: "{{ wifi_ssids | selectattr('ppsk_profile', 'defined') | list | length > 0 }}"
+  when: wifi_ssids is defined and (wifi_ssids | length > 0)
+  tags: [wifi]
+
+- name: Fetch PPSK profiles when needed (for SSID-to-profile mapping)
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/ppsk?type=0"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_ppsk_resp
+  changed_when: false
+  failed_when: false
+  when: wifi_ssids is defined and _wifi_needs_ppsk | default(false)
+  tags: [wifi]
+
+- name: Check if PPSK is supported
+  set_fact:
+    _ppsk_supported: "{{ omada_ppsk_resp.status == 200 and (omada_ppsk_resp.json.errorCode | default(1)) == 0 }}"
+  when: wifi_ssids is defined and _wifi_needs_ppsk | default(false)
+  tags: [wifi]
+
+- name: Build PPSK profile name-to-ID mapping
+  set_fact:
+    omada_ppsk_profile_map: >-
+      {{
+        dict(
+          omada_ppsk_resp.json.result | default([])
+          | map(attribute='profileName')
+          | zip(omada_ppsk_resp.json.result | default([]) | map(attribute='id'))
+        )
+      }}
+  when: wifi_ssids is defined and _wifi_needs_ppsk | default(false) and _ppsk_supported | default(false)
+  tags: [wifi]
+
+- name: Debug PPSK profile mapping
+  debug:
+    msg: "Built PPSK profile mapping with {{ omada_ppsk_profile_map | default({}) | length }} profiles"
+  when: wifi_ssids is defined and _wifi_needs_ppsk | default(false) and _ppsk_supported | default(false) and omada_api_debug | default(false)
+  tags: [wifi]
+
+- name: Warn if PPSK profiles needed but not supported
+  debug:
+    msg: "WARNING: Some SSIDs require PPSK profiles, but PPSK API is not available on this controller/gateway. These SSIDs will fail to create."
+  when: wifi_ssids is defined and _wifi_needs_ppsk | default(false) and not (_ppsk_supported | default(false))
+  tags: [wifi]
+
+# ============================================
+# SSID Processing
+# ============================================
+
+- name: Process each SSID configuration
+  include_tasks: ensure_ssid.yml
+  loop: "{{ wifi_ssids }}"
+  loop_control:
+    loop_var: ssid_item
+    label: "{{ ssid_item.name }}"
+  when: wifi_ssids is defined and (wifi_ssids | length > 0)
+  tags: [wifi]
+
+- name: Build list of SSIDs to keep
+  set_fact:
+    _ssid_names_to_keep: "{{ wifi_ssids | map(attribute='name') | list }}"
+  when: wifi_ssids is defined and omada_auto_cleanup | default(false)
+  tags: [wifi, cleanup]
+
+- name: Find SSIDs not in config
+  set_fact:
+    _ssids_to_delete: >-
+      {{
+        omada_ssids_existing | default([])
+        | selectattr('name', 'defined')
+        | rejectattr('name', 'in', _ssid_names_to_keep)
+        | list
+      }}
+  when: wifi_ssids is defined and omada_auto_cleanup | default(false) and _ssid_names_to_keep is defined
+  tags: [wifi, cleanup]
+
+- name: Warning about SSIDs to be deleted
+  debug:
+    msg:
+      - "WARNING: Auto-cleanup is enabled!"
+      - "The following SSIDs will be DELETED because they are not in the playbook:"
+      - "{{ _ssids_to_delete | map(attribute='name') | list | join(', ') }}"
+  when: wifi_ssids is defined and omada_auto_cleanup | default(false) and (_ssids_to_delete | default([]) | length > 0)
+  tags: [wifi, cleanup]
+
+- name: Delete SSIDs not defined in playbook (auto-cleanup)
+  uri:
+    url: "{{ omada_api_base }}/setting/wlans/{{ _wlan_profile_id }}/ssids/{{ item.id }}"
+    method: DELETE
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  loop: "{{ _ssids_to_delete | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _delete_ssid_results
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _delete_ssid_results is succeeded
+  when: wifi_ssids is defined and omada_auto_cleanup | default(false) and (_ssids_to_delete | default([]) | length > 0)
+  changed_when: _delete_ssid_results.status in [200, 204]
+  failed_when: _delete_ssid_results.status not in [200, 204]
+  tags: [wifi, cleanup]
+
+- name: Summary of cleanup operations
+  debug:
+    msg: "Deleted {{ _ssids_to_delete | default([]) | length }} SSID(s) not in playbook configuration"
+  when: wifi_ssids is defined and omada_auto_cleanup | default(false) and (_ssids_to_delete | default([]) | length > 0)
+  tags: [wifi, cleanup]

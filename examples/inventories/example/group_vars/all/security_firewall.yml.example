@@ -1,0 +1,154 @@
+---
+# Firewall ACL Rules
+#
+# Define access control rules between network segments.
+# Rules are processed in order, first match wins.
+
+firewall_acl_rules:
+  # Allow Trusted network to access IoT devices
+  - name: "Allow-Trusted-to-IoT"
+    acl_type: gateway
+    action: allow
+    enabled: true
+    protocols: [tcp, udp]
+    source_type: network
+    source_vlans: [10]  # Trusted
+    destination_type: network
+    destination_vlans: [20]  # IoT
+    direction:
+      lan_to_lan: true
+      lan_to_wan: false
+    bidirectional: false
+    enable_logging: false
+
+  # Block IoT devices from accessing Trusted network
+  - name: "Block-IoT-to-Trusted"
+    acl_type: gateway
+    action: deny
+    enabled: true
+    protocols: [all]
+    source_type: network
+    source_vlans: [20]  # IoT
+    destination_type: network
+    destination_vlans: [10]  # Trusted
+    direction:
+      lan_to_lan: true
+      lan_to_wan: false
+    bidirectional: false
+    enable_logging: true  # Log blocked attempts
+
+  # Allow cameras to access NVR server (using IP groups)
+  # NOTE: Gateway ACLs only support IP groups for LAN/WAN, not LAN/LAN
+  # Use Switch or EAP ACL types for LAN/LAN with IP groups
+  - name: "Allow-Cameras-to-NVR"
+    acl_type: switch
+    action: allow
+    enabled: true
+    protocols: [tcp]
+    source_type: ip_group
+    source_ip_groups: ["Security-Cameras"]
+    destination_type: ip_group
+    destination_ip_groups: ["Internal-Servers"]
+    enable_logging: false
+
+  # Allow Guest network to DNS service only (using IP-Port group)
+  # Gateway LAN/WAN supports IP groups and IP-Port groups
+  - name: "Allow-Guest-to-DNS-Service"
+    acl_type: gateway
+    action: allow
+    enabled: true
+    protocols: [udp, tcp]
+    source_type: network
+    source_vlans: [30]  # Guest
+    destination_type: ip_group
+    destination_ip_groups: ["DNS-Service"]  # IP-Port group with port 53
+    direction:
+      lan_to_lan: false
+      lan_to_wan: true
+    bidirectional: false
+    enable_logging: false
+
+  # Allow IoT devices to Web Services (using IP-Port group)
+  - name: "Allow-IoT-to-Web-Services"
+    acl_type: switch
+    action: allow
+    enabled: true
+    protocols: [tcp]
+    source_type: network
+    source_vlans: [20]  # IoT
+    destination_type: ip_group
+    destination_ip_groups: ["Web-Services"]  # IP-Port group with ports 80, 443
+    enable_logging: false
+
+  # Block Guest network from LAN
+  - name: "Block-Guest-to-LAN"
+    acl_type: gateway
+    action: deny
+    enabled: true
+    protocols: [all]
+    source_type: network
+    source_vlans: [30]  # Guest
+    destination_type: network
+    destination_vlans: [10, 20]  # Trusted, IoT
+    direction:
+      lan_to_lan: true
+      lan_to_wan: false
+    bidirectional: false
+    enable_logging: false
+
+# Field Descriptions:
+#
+# name: Rule name (descriptive)
+# acl_type: Where rule applies
+#   - gateway: Inter-VLAN routing
+#   - switch: Switch-level filtering
+#   - eap: Access point filtering
+# action: What to do with matching traffic
+#   - allow: Permit traffic
+#   - deny: Block traffic
+# enabled: Whether rule is active
+# protocols: List of protocols
+#   - [all]: All protocols
+#   - [tcp]: TCP only
+#   - [udp]: UDP only
+#   - [tcp, udp]: Both TCP and UDP
+#   - [icmp]: ICMP (ping)
+# source_type: Type of source
+#   - network: VLAN-based
+#   - ip_group: IP group or IP-Port group from security_ip_groups.yml
+# source_vlans: List of source VLAN IDs (if source_type is network)
+# source_ip_groups: List of group names - can be IP groups OR IP-Port groups
+#   - The playbook automatically detects the group type
+#   - IP groups (type=0): Just IP addresses
+#   - IP-Port groups (type=1): IP addresses + specific ports
+# destination_type: Type of destination (same options as source)
+# destination_vlans: List of destination VLAN IDs
+# destination_ip_groups: List of group names - can be IP groups OR IP-Port groups
+# direction: Where traffic flows (Gateway ACL only)
+#   lan_to_lan: Between VLANs
+#   lan_to_wan: To internet
+# bidirectional: Apply rule in both directions
+# enable_logging: Log when rule matches
+#
+# IMPORTANT: Gateway ACL Limitations
+# - Gateway ACLs support IP groups ONLY for LAN-to-WAN traffic
+# - For LAN-to-LAN rules with IP groups, use Switch or EAP ACL types
+# - Gateway LAN-to-LAN rules must use whole networks (source_vlans/destination_vlans)
+#
+# IP-Port Groups Usage:
+# - Use IP-Port groups when you need port-specific control
+# - Examples: Allow DNS (port 53), HTTP/HTTPS (ports 80,443), SSH (port 22)
+# - Works with all ACL types (Gateway LAN/WAN, Switch, EAP)
+# - More granular control than IP groups alone
+#
+# Common Patterns:
+# - Trusted → IoT: Allow (management access)
+# - IoT → Trusted: Block (security isolation)
+# - Guest → LAN: Block (guest isolation)
+# - LAN → WAN: Allow (internet access)
+# - Guest → DNS Service: Allow specific service only (using IP-Port groups)
+#
+# Rule Order Matters:
+# - More specific rules first
+# - Block rules before allow rules for same traffic
+# - Default policy is usually allow (check controller)

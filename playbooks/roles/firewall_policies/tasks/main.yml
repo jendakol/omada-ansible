@@ -1,0 +1,444 @@
+---
+# Firewall ACL policy configuration via Omada Controller API v2
+# Manages inter-VLAN and WAN access control rules
+
+- name: Skip firewall configuration when not defined
+  debug:
+    msg: "No firewall ACL rules defined - skipping ACL configuration"
+  when: firewall_acl_rules is not defined or (firewall_acl_rules | default([]) | length == 0)
+  tags: [firewall]
+
+- name: Fetch existing Gateway ACL rules (type=0)
+  uri:
+    url: "{{ omada_api_base }}/setting/firewall/acls?currentPage=1&currentPageSize=50&type=0"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_gateway_acls_resp
+  changed_when: false
+  failed_when: false
+  tags: [firewall]
+
+- name: Fetch existing Switch ACL rules (type=1)
+  uri:
+    url: "{{ omada_api_base }}/setting/firewall/acls?currentPage=1&currentPageSize=50&type=1"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_switch_acls_resp
+  changed_when: false
+  failed_when: false
+  tags: [firewall]
+
+- name: Fetch existing EAP ACL rules (type=2)
+  uri:
+    url: "{{ omada_api_base }}/setting/firewall/acls?currentPage=1&currentPageSize=50&type=2"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_eap_acls_resp
+  changed_when: false
+  failed_when: false
+  tags: [firewall]
+
+- name: Debug firewall API response
+  debug:
+    msg:
+      - "Gateway ACLs - Status: {{ omada_gateway_acls_resp.status }}, Error: {{ omada_gateway_acls_resp.json.errorCode | default('N/A') }}"
+      - "Switch ACLs - Status: {{ omada_switch_acls_resp.status }}, Error: {{ omada_switch_acls_resp.json.errorCode | default('N/A') }}"
+      - "EAP ACLs - Status: {{ omada_eap_acls_resp.status }}, Error: {{ omada_eap_acls_resp.json.errorCode | default('N/A') }}"
+  when: omada_api_debug | default(false)
+  tags: [firewall]
+
+- name: Check if firewall ACLs are supported (any type)
+  set_fact:
+    _firewall_supported: "{{ (omada_gateway_acls_resp.status == 200 and (omada_gateway_acls_resp.json.errorCode | default(1)) == 0) or (omada_switch_acls_resp.status == 200 and (omada_switch_acls_resp.json.errorCode | default(1)) == 0) or (omada_eap_acls_resp.status == 200 and (omada_eap_acls_resp.json.errorCode | default(1)) == 0) }}"
+  tags: [firewall]
+
+- name: Warn if firewall not supported
+  debug:
+    msg: "WARNING: Firewall ACL API endpoint not available or not supported on this controller/gateway setup. Skipping firewall configuration."
+  when: not _firewall_supported
+  tags: [firewall]
+
+- name: Build map of existing ACL rules (combine all types)
+  set_fact:
+    omada_acls_existing: >-
+      {{
+        (omada_gateway_acls_resp.json.result.data | default(omada_gateway_acls_resp.json.data | default([])))
+        + (omada_switch_acls_resp.json.result.data | default(omada_switch_acls_resp.json.data | default([])))
+        + (omada_eap_acls_resp.json.result.data | default(omada_eap_acls_resp.json.data | default([])))
+      }}
+  when: _firewall_supported
+  tags: [firewall]
+
+- name: Debug existing ACL rules
+  debug:
+    msg: "Found {{ omada_acls_existing | length }} existing ACL rules"
+  when: _firewall_supported
+  tags: [firewall]
+
+- name: Debug sample of existing ACL rules (for API reverse-engineering)
+  debug:
+    var: omada_acls_existing
+  when: omada_api_debug | default(false) and _firewall_supported
+  tags: [firewall]
+
+- name: Fetch existing networks for network ID resolution
+  uri:
+    url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_networks_for_acl
+  changed_when: false
+  when: _firewall_supported
+  tags: [firewall]
+
+- name: Build network map (name -> id, vlan -> id)
+  set_fact:
+    _network_map: "{{ dict(omada_networks_for_acl.json.result.data | default(omada_networks_for_acl.json.data | default([])) | map(attribute='name') | zip(omada_networks_for_acl.json.result.data | default(omada_networks_for_acl.json.data | default([])) | map(attribute='id'))) }}"
+    _vlan_to_network_map: "{{ dict(omada_networks_for_acl.json.result.data | default(omada_networks_for_acl.json.data | default([])) | selectattr('vlan', 'defined') | map(attribute='vlan') | map('string') | zip(omada_networks_for_acl.json.result.data | default(omada_networks_for_acl.json.data | default([])) | selectattr('vlan', 'defined') | map(attribute='id'))) }}"
+  when: _firewall_supported
+  tags: [firewall]
+
+- name: Debug network mappings
+  debug:
+    msg:
+      - "Network name -> ID mapping: {{ _network_map }}"
+      - "VLAN ID -> Network ID mapping: {{ _vlan_to_network_map }}"
+  when: omada_api_debug | default(false) and _firewall_supported
+  tags: [firewall]
+
+- name: Fetch existing IP groups for ACL rules (type=0)
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/groups?type=0&currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_acl_ip_groups_resp
+  changed_when: false
+  failed_when: false
+  when: _firewall_supported
+  tags: [firewall]
+
+- name: Fetch existing IP-Port groups for ACL rules (type=1)
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/groups?type=1&currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_acl_ip_port_groups_resp
+  changed_when: false
+  failed_when: false
+  when: _firewall_supported
+  tags: [firewall]
+
+- name: Initialize empty IP group map if API calls failed
+  set_fact:
+    _ip_group_map: {}
+  when: _firewall_supported and ((omada_acl_ip_groups_resp.status != 200 or omada_acl_ip_groups_resp is not defined) and (omada_acl_ip_port_groups_resp.status != 200 or omada_acl_ip_port_groups_resp is not defined))
+  tags: [firewall]
+
+- name: Build combined IP group + IP-Port group name-to-ID mapping for ACL rules
+  set_fact:
+    _ip_group_map: >-
+      {{
+        dict(
+          (omada_acl_ip_groups_resp.json.result.data | default(omada_acl_ip_groups_resp.json.data | default([])) | selectattr('type', 'equalto', 0) | list
+          + omada_acl_ip_port_groups_resp.json.result.data | default(omada_acl_ip_port_groups_resp.json.data | default([])) | selectattr('type', 'equalto', 1) | list)
+          | map(attribute='name')
+          | zip(
+            (omada_acl_ip_groups_resp.json.result.data | default(omada_acl_ip_groups_resp.json.data | default([])) | selectattr('type', 'equalto', 0) | list
+            + omada_acl_ip_port_groups_resp.json.result.data | default(omada_acl_ip_port_groups_resp.json.data | default([])) | selectattr('type', 'equalto', 1) | list)
+            | map(attribute='groupId')
+          )
+        )
+      }}
+  when: _firewall_supported and (omada_acl_ip_groups_resp.status == 200 or omada_acl_ip_port_groups_resp.status == 200)
+  tags: [firewall]
+
+- name: Build group name-to-type mapping (0=IP group, 1=IP-Port group)
+  set_fact:
+    _ip_group_type_map: >-
+      {{
+        dict(
+          (omada_acl_ip_groups_resp.json.result.data | default(omada_acl_ip_groups_resp.json.data | default([])) | selectattr('type', 'equalto', 0) | list
+          + omada_acl_ip_port_groups_resp.json.result.data | default(omada_acl_ip_port_groups_resp.json.data | default([])) | selectattr('type', 'equalto', 1) | list)
+          | map(attribute='name')
+          | zip(
+            (omada_acl_ip_groups_resp.json.result.data | default(omada_acl_ip_groups_resp.json.data | default([])) | selectattr('type', 'equalto', 0) | list
+            + omada_acl_ip_port_groups_resp.json.result.data | default(omada_acl_ip_port_groups_resp.json.data | default([])) | selectattr('type', 'equalto', 1) | list)
+            | map(attribute='type')
+          )
+        )
+      }}
+  when: _firewall_supported and (omada_acl_ip_groups_resp.status == 200 or omada_acl_ip_port_groups_resp.status == 200)
+  tags: [firewall]
+
+- name: Debug IP group and IP-Port group mapping
+  debug:
+    msg: "IP group + IP-Port group name -> ID mapping: {{ _ip_group_map }}"
+  when: omada_api_debug | default(false) and _firewall_supported and _ip_group_map is defined
+  tags: [firewall]
+
+- name: Find built-in IPGroup_Any for WAN rules (destination = "any" / "internet")
+  set_fact:
+    _ipgroup_any_id: >-
+      {{
+        (omada_acl_ip_groups_resp.json.result.data | default(omada_acl_ip_groups_resp.json.data | default([]))
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', 'IPGroup_Any')
+        | map(attribute='groupId')
+        | first)
+        | default('')
+      }}
+  when: _firewall_supported and omada_acl_ip_groups_resp.status == 200
+  tags: [firewall]
+
+- name: Debug IPGroup_Any ID for WAN rules
+  debug:
+    msg: "Built-in IPGroup_Any ID for WAN destination: {{ _ipgroup_any_id }}"
+  when: omada_api_debug | default(false) and _firewall_supported and _ipgroup_any_id is defined
+  tags: [firewall]
+
+# ==========================================
+# CREATE/UPDATE PHASE - Run FIRST to ensure rules are in place
+# ==========================================
+
+- name: Ensure each ACL rule
+  include_tasks: ensure_acl_rule.yml
+  loop: "{{ firewall_acl_rules }}"
+  loop_control:
+    loop_var: acl_rule_item
+    index_var: acl_rule_index
+    label: "ACL rule: {{ acl_rule_item.name }} (index: {{ acl_rule_index + 1 }})"
+  when: _firewall_supported
+  tags: [firewall]
+
+# ==========================================
+# REORDER PHASE - Set correct rule order using modifyIndex API
+# ==========================================
+
+- name: Re-fetch ACL rules to get IDs after creation/update
+  uri:
+    url: "{{ omada_api_base }}/setting/firewall/acls?currentPage=1&currentPageSize=200&type={{ item }}"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: _acls_after_update
+  loop: [0, 1, 2]  # Gateway, Switch, EAP
+  when: _firewall_supported
+  tags: [firewall]
+
+- name: Build map of rule name to ID and type for reordering
+  set_fact:
+    _acl_name_to_id: >-
+      {{
+        dict(
+          (_acls_after_update.results | map(attribute='json.result.data') | map('default', []) | flatten)
+          | selectattr('name', 'in', firewall_acl_rules | map(attribute='name'))
+          | map(attribute='name')
+          | zip(
+            (_acls_after_update.results | map(attribute='json.result.data') | map('default', []) | flatten)
+            | selectattr('name', 'in', firewall_acl_rules | map(attribute='name'))
+            | map(attribute='id')
+          )
+        )
+      }}
+  when: _firewall_supported
+  tags: [firewall]
+
+- name: Debug rule name to ID mapping after create/update
+  debug:
+    msg:
+      - "Total rules in playbook config: {{ firewall_acl_rules | length }}"
+      - "Total rules in _acl_name_to_id mapping: {{ _acl_name_to_id | length }}"
+      - "Rules in mapping: {{ _acl_name_to_id.keys() | list }}"
+      - "Rules in playbook: {{ firewall_acl_rules | map(attribute='name') | list }}"
+  when: omada_api_debug | default(false) and _firewall_supported
+  tags: [firewall]
+
+- name: Build reorder dictionaries for each ACL type
+  set_fact:
+    _reorder_gateway: {}
+    _reorder_switch: {}
+    _reorder_eap: {}
+  when: _firewall_supported
+  tags: [firewall]
+
+- name: Build reorder dictionary for gateway rules
+  set_fact:
+    _reorder_gateway: "{{ _reorder_gateway | combine({_acl_name_to_id[item.name]: loop_index}) }}"
+  loop: "{{ firewall_acl_rules | selectattr('acl_type', 'undefined') + firewall_acl_rules | selectattr('acl_type', 'defined') | selectattr('acl_type', 'equalto', 'gateway') }}"
+  loop_control:
+    index_var: loop_index0
+    label: "{{ item.name }}"
+  vars:
+    loop_index: "{{ loop_index0 + 1 }}"
+  when:
+    - _firewall_supported
+    - item.name in _acl_name_to_id
+  tags: [firewall]
+
+- name: Build reorder dictionary for switch rules
+  set_fact:
+    _reorder_switch: "{{ _reorder_switch | combine({_acl_name_to_id[item.name]: loop_index}) }}"
+  loop: "{{ firewall_acl_rules | selectattr('acl_type', 'defined') | selectattr('acl_type', 'equalto', 'switch') }}"
+  loop_control:
+    index_var: loop_index0
+    label: "{{ item.name }}"
+  vars:
+    loop_index: "{{ loop_index0 + 1 }}"
+  when:
+    - _firewall_supported
+    - item.name in _acl_name_to_id
+  tags: [firewall]
+
+- name: Build reorder dictionary for EAP rules
+  set_fact:
+    _reorder_eap: "{{ _reorder_eap | combine({_acl_name_to_id[item.name]: loop_index}) }}"
+  loop: "{{ firewall_acl_rules | selectattr('acl_type', 'defined') | selectattr('acl_type', 'equalto', 'eap') }}"
+  loop_control:
+    index_var: loop_index0
+    label: "{{ item.name }}"
+  vars:
+    loop_index: "{{ loop_index0 + 1 }}"
+  when:
+    - _firewall_supported
+    - item.name in _acl_name_to_id
+  tags: [firewall]
+
+- name: Debug reorder payloads
+  debug:
+    msg:
+      - "Gateway ACL reorder (ID -> index): {{ _reorder_gateway }}"
+      - "Switch ACL reorder (ID -> index): {{ _reorder_switch }}"
+      - "EAP ACL reorder (ID -> index): {{ _reorder_eap }}"
+      - "Gateway rules in config order: {{ (firewall_acl_rules | selectattr('acl_type', 'undefined') + firewall_acl_rules | selectattr('acl_type', 'defined') | selectattr('acl_type', 'equalto', 'gateway')) | map(attribute='name') | list }}"
+      - "Switch rules in config order: {{ firewall_acl_rules | selectattr('acl_type', 'defined') | selectattr('acl_type', 'equalto', 'switch') | map(attribute='name') | list }}"
+      - "EAP rules in config order: {{ firewall_acl_rules | selectattr('acl_type', 'defined') | selectattr('acl_type', 'equalto', 'eap') | map(attribute='name') | list }}"
+  when: omada_api_debug | default(false) and _firewall_supported
+  tags: [firewall]
+
+- name: Reorder Gateway ACL rules using modifyIndex API
+  uri:
+    url: "{{ omada_api_base }}/cmd/acls/modifyIndex"
+    method: POST
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    body_format: json
+    body:
+      indexes: "{{ _reorder_gateway }}"
+      type: 0
+    status_code: [200]
+    return_content: true
+  when: _firewall_supported and (_reorder_gateway | length > 0)
+  changed_when: true
+  tags: [firewall]
+
+- name: Reorder Switch ACL rules using modifyIndex API
+  uri:
+    url: "{{ omada_api_base }}/cmd/acls/modifyIndex"
+    method: POST
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    body_format: json
+    body:
+      indexes: "{{ _reorder_switch }}"
+      type: 1
+    status_code: [200]
+    return_content: true
+  when: _firewall_supported and (_reorder_switch | length > 0)
+  changed_when: true
+  tags: [firewall]
+
+- name: Reorder EAP ACL rules using modifyIndex API
+  uri:
+    url: "{{ omada_api_base }}/cmd/acls/modifyIndex"
+    method: POST
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    body_format: json
+    body:
+      indexes: "{{ _reorder_eap }}"
+      type: 2
+    status_code: [200]
+    return_content: true
+  when: _firewall_supported and (_reorder_eap | length > 0)
+  changed_when: true
+  tags: [firewall]
+
+# ==========================================
+# CLEANUP PHASE - Run LAST after all rules are in place (secure)
+# ==========================================
+
+- name: Find ACL rules to clean up (not in playbook config)
+  set_fact:
+    _acls_to_delete: >-
+      {{
+        omada_acls_existing | default([])
+        | rejectattr('name', 'in', firewall_acl_rules | map(attribute='name') | list)
+        | list
+      }}
+  when: omada_auto_cleanup | default(false)
+  tags: [firewall, cleanup]
+
+- name: Warning about ACL rules to be deleted
+  debug:
+    msg:
+      - "WARNING: Auto-cleanup is enabled!"
+      - "The following ACL rules will be DELETED because they are not in the playbook:"
+      - "{{ _acls_to_delete | map(attribute='name') | list | join(', ') }}"
+  when: omada_auto_cleanup | default(false) and (_acls_to_delete | default([]) | length > 0)
+  tags: [firewall, cleanup]
+
+- name: Delete ACL rules not defined in playbook (auto-cleanup)
+  uri:
+    url: "{{ omada_api_base }}/setting/firewall/acls/{{ item.id }}"
+    method: DELETE
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  loop: "{{ _acls_to_delete | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _delete_acl_results
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _delete_acl_results is succeeded
+  when: omada_auto_cleanup | default(false) and (_acls_to_delete | default([]) | length > 0)
+  changed_when: _delete_acl_results.status in [200, 204]
+  failed_when: _delete_acl_results.status not in [200, 204]
+  tags: [firewall, cleanup]
+
+- name: Debug cleanup results
+  debug:
+    msg: "Deleted {{ _acls_to_delete | default([]) | length }} ACL rule(s)"
+  when: omada_auto_cleanup | default(false)
+  tags: [firewall, cleanup]
+
+- name: Summary of firewall ACL configuration
+  debug:
+    msg:
+      - "Firewall ACL Configuration Complete"
+      - "  Configured: {{ firewall_acl_rules | length }} rule(s)"
+      - "  Reordered: Gateway={{ _reorder_gateway | length }}, Switch={{ _reorder_switch | length }}, EAP={{ _reorder_eap | length }}"
+      - "  Deleted: {{ _acls_to_delete | default([]) | length }} rule(s)"
+  when: _firewall_supported
+  tags: [firewall]

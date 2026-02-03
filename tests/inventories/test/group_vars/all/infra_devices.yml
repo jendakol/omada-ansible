@@ -1,0 +1,41 @@
+---
+# Test Device Registry
+#
+# MAC Address Format: Use uppercase with dashes (AA-BB-CC-DD-EE-FF) to match Omada Controller format
+
+devices:
+  # WiFi device on Test-Trusted with static IP
+  - name: test-device-1
+    mac: "AA-BB-CC-DD-EE-01"
+    network: "Test-Trusted"
+    type: wifi
+    ip: "192.168.10.100"
+    hostname: "test-host-1"
+    description: "Test WiFi device 1"
+
+  # WiFi device on Test-Trusted with static IP
+  - name: test-device-2
+    mac: "AA-BB-CC-DD-EE-02"
+    network: "Test-Trusted"
+    type: wifi
+    ip: "192.168.10.101"
+    hostname: "test-host-2"
+    description: "Test WiFi device 2"
+
+  # WiFi device on Test-IoT with static IP
+  - name: test-iot-device
+    mac: "AA-BB-CC-DD-EE-10"
+    network: "Test-IoT"
+    type: wifi
+    ip: "192.168.20.10"
+    hostname: "test-iot-1"
+    description: "Test IoT device"
+
+  # Wired device on Test-Trusted with static IP
+  - name: test-wired-device
+    mac: "AA-BB-CC-DD-EE-03"
+    network: "Test-Trusted"
+    type: wired
+    ip: "192.168.10.50"
+    hostname: "test-wired-1"
+    description: "Test wired device"

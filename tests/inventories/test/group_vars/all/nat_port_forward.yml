@@ -1,0 +1,13 @@
+---
+# Test Port Forwarding
+#
+# Tests for port forwarding configuration with device references and WAN interface selection
+
+port_forward_rules:
+  # Simple test for CREATE, UPDATE, IDEMPOTENCY
+  - name: "Test-Port-Forward"
+    external_port: "8080"
+    forward_device: "test-device-1"  # Resolves to 192.168.10.100 from DHCP
+    forward_port: "80"
+    protocol: tcp
+    enabled: true

@@ -1,0 +1,51 @@
+---
+# Test IP Groups
+#
+# Tests for IP group configuration with both device references and direct addresses
+
+ip_groups:
+  # Test using device references (RECOMMENDED approach)
+  - name: "Test-Group-1"
+    description: "Test IP group with device references"
+    devices:
+      - test-device-1
+      - test-device-2
+
+  # Test using direct addresses (LEGACY or external IPs)
+  - name: "Test-Group-2"
+    description: "Test IP group with direct addresses"
+    addresses:
+      - "192.168.20.10/32"
+      - "192.168.20.20/32"
+
+  # Test using both devices and addresses (HYBRID)
+  - name: "Test-Group-Mixed"
+    description: "Test IP group with both devices and addresses"
+    devices:
+      - test-device-1
+    addresses:
+      - "8.8.8.8/32"  # External IP example
+
+# Test IP-Port Groups
+#
+# IP-Port groups combine IP addresses with specific ports for granular firewall control
+
+ip_port_groups:
+  # Test with devices and ports
+  - name: "Test-IP-Port-Group"
+    description: "Test IP-Port group with devices and ports"
+    devices:
+      - test-device-1
+      - test-device-2
+    ports:
+      - 53
+      - 80
+
+  # Test with addresses and ports
+  - name: "Test-IP-Port-Direct"
+    description: "Test IP-Port group with direct addresses"
+    addresses:
+      - "192.168.10.100/32"
+    ports:
+      - 443
+      - 8080

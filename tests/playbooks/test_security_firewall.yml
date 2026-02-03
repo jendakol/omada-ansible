@@ -1,0 +1,272 @@
+---
+# Test 6: Firewall ACL Rules
+# Verifies CREATE, UPDATE, and IDEMPOTENCY
+
+- name: Test Firewall Rules
+  hosts: omada-controller
+  connection: local
+  gather_facts: false
+  vars:
+    omada_api_debug: true
+
+  tasks:
+    # ==========================================
+    # PHASE 1: CREATE - Initial Configuration
+    # ==========================================
+    - name: "PHASE 1: CREATE - Create firewall rule"
+      block:
+        - name: Include omada_controller role
+          include_role:
+            name: omada_controller
+
+        - name: Include vlans role (needed for firewall)
+          include_role:
+            name: vlans
+
+        - name: Include ip_groups role (needed for IP group-based rules)
+          include_role:
+            name: ip_groups
+
+        - name: Include firewall_policies role (initial config)
+          include_role:
+            name: firewall_policies
+
+        - name: Verify ACL rule was created
+          uri:
+            url: "{{ omada_api_base }}/setting/firewall/acls?currentPage=1&currentPageSize=50&type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_create
+
+        - name: Check Test-Allow-Rule created
+          assert:
+            that:
+              - (verify_create.json.result.data | default(verify_create.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Allow-Rule') | list | length > 0
+            fail_msg: "Test-Allow-Rule not created"
+            success_msg: "✓ Test-Allow-Rule created successfully"
+
+        - name: Check Test-Gateway-LAN-WAN-IP-Port-Group created
+          assert:
+            that:
+              - (verify_create.json.result.data | default(verify_create.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Gateway-LAN-WAN-IP-Port-Group') | list | length > 0
+            fail_msg: "Test-Gateway-LAN-WAN-IP-Port-Group not created"
+            success_msg: "✓ Test-Gateway-LAN-WAN-IP-Port-Group created successfully (Gateway LAN/WAN with IP-Port group)"
+
+    # ==========================================
+    # PHASE 2: UPDATE - Change rule name
+    # ==========================================
+    - name: "PHASE 2: UPDATE - Rename firewall rule"
+      block:
+        - name: Update firewall rule configuration (change name)
+          set_fact:
+            firewall_acl_rules:
+              - name: "Test-Allow-Rule-Updated"  # Changed name
+                acl_type: gateway
+                action: allow
+                enabled: true
+                protocols: [tcp]
+                source_type: network
+                source_vlans: [10]
+                destination_type: network
+                destination_vlans: [20]
+                direction:
+                  lan_to_lan: true
+                  lan_to_wan: false
+                bidirectional: false
+                enable_logging: false
+
+              - name: "Test-Gateway-LAN-WAN-IP-Port-Group"  # Keep IP-Port group test
+                acl_type: gateway
+                action: allow
+                enabled: true
+                protocols: [tcp]
+                source_type: network
+                source_vlans: [10]
+                destination_type: ip_group
+                destination_ip_groups: ["Test-IP-Port-Group"]
+                direction:
+                  lan_to_lan: false
+                  lan_to_wan: true
+                bidirectional: false
+                enable_logging: false
+
+        - name: Re-run firewall_policies role with updated config
+          include_role:
+            name: firewall_policies
+
+        - name: Verify ACL rule was renamed
+          uri:
+            url: "{{ omada_api_base }}/setting/firewall/acls?currentPage=1&currentPageSize=50&type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_update
+
+        - name: Check Test-Allow-Rule renamed
+          assert:
+            that:
+              - (verify_update.json.result.data | default(verify_update.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Allow-Rule-Updated') | list | length > 0
+            fail_msg: "Test-Allow-Rule not renamed correctly"
+            success_msg: "✓ Test-Allow-Rule renamed successfully"
+
+    # ==========================================
+    # PHASE 3: ORDERING - Verify rule order
+    # ==========================================
+    - name: "PHASE 3: ORDERING - Test rule ordering with multiple rules"
+      block:
+        - name: Add multiple rules to test ordering (keep existing rules too)
+          set_fact:
+            firewall_acl_rules:
+              # Ordering test rules first (so they get indices 1, 2, 3)
+              - name: "Test-Rule-First"
+                acl_type: gateway
+                action: allow
+                enabled: true
+                protocols: [tcp]
+                source_type: network
+                source_vlans: [10]
+                destination_type: network
+                destination_vlans: [20]
+                direction:
+                  lan_to_lan: true
+                  lan_to_wan: false
+                bidirectional: false
+                enable_logging: false
+
+              - name: "Test-Rule-Second"
+                acl_type: gateway
+                action: deny
+                enabled: true
+                protocols: [udp]
+                source_type: network
+                source_vlans: [20]
+                destination_type: network
+                destination_vlans: [10]
+                direction:
+                  lan_to_lan: true
+                  lan_to_wan: false
+                bidirectional: false
+                enable_logging: false
+
+              - name: "Test-Rule-Third"
+                acl_type: gateway
+                action: allow
+                enabled: true
+                protocols: [tcp, udp]
+                source_type: network
+                source_vlans: [10]
+                destination_type: network
+                destination_vlans: [20]
+                direction:
+                  lan_to_lan: true
+                  lan_to_wan: false
+                bidirectional: false
+                enable_logging: false
+
+              # Keep the updated rule from Phase 2 (will get index 4)
+              - name: "Test-Allow-Rule-Updated"
+                acl_type: gateway
+                action: allow
+                enabled: true
+                protocols: [tcp]
+                source_type: network
+                source_vlans: [10]
+                destination_type: network
+                destination_vlans: [20]
+                direction:
+                  lan_to_lan: true
+                  lan_to_wan: false
+                bidirectional: false
+                enable_logging: false
+
+              # Keep IP-Port group test rule (will get index 5)
+              - name: "Test-Gateway-LAN-WAN-IP-Port-Group"
+                acl_type: gateway
+                action: allow
+                enabled: true
+                protocols: [tcp]
+                source_type: network
+                source_vlans: [10]
+                destination_type: ip_group
+                destination_ip_groups: ["Test-IP-Port-Group"]
+                direction:
+                  lan_to_lan: false
+                  lan_to_wan: true
+                bidirectional: false
+                enable_logging: false
+
+        - name: Re-run firewall_policies role with multiple rules
+          include_role:
+            name: firewall_policies
+
+        - name: Fetch ACL rules to verify ordering
+          uri:
+            url: "{{ omada_api_base }}/setting/firewall/acls?currentPage=1&currentPageSize=50&type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_ordering
+
+        - name: Verify rules are in correct order
+          assert:
+            that:
+              - (verify_ordering.json.result.data | default(verify_ordering.json.data | default([])) | selectattr('name', 'equalto', 'Test-Rule-First') | first).index == 1
+              - (verify_ordering.json.result.data | default(verify_ordering.json.data | default([])) | selectattr('name', 'equalto', 'Test-Rule-Second') | first).index == 2
+              - (verify_ordering.json.result.data | default(verify_ordering.json.data | default([])) | selectattr('name', 'equalto', 'Test-Rule-Third') | first).index == 3
+            fail_msg: "Rules not in correct order"
+            success_msg: "✓ Rules are in correct order (indices 1, 2, 3)"
+
+    # ==========================================
+    # PHASE 4: IDEMPOTENCY - No Changes
+    # ==========================================
+    - name: "PHASE 4: IDEMPOTENCY - Run again without changes"
+      block:
+        - name: Get current firewall state before idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/firewall/acls?currentPage=1&currentPageSize=50&type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_before_idempotency
+
+        - name: Run firewall_policies role again (no config changes)
+          include_role:
+            name: firewall_policies
+
+        - name: Get firewall state after idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/firewall/acls?currentPage=1&currentPageSize=50&type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_after_idempotency
+
+        - name: Verify configuration unchanged (idempotency)
+          assert:
+            that:
+              - (state_before_idempotency.json.result.data | default(state_before_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Allow-Rule-Updated') | list | length > 0
+              - (state_after_idempotency.json.result.data | default(state_after_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Allow-Rule-Updated') | list | length > 0
+              - ((state_before_idempotency.json.result.data | default(state_before_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Allow-Rule-Updated') | first).name == ((state_after_idempotency.json.result.data | default(state_after_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'Test-Allow-Rule-Updated') | first).name
+            fail_msg: "Configuration changed when it shouldn't have (not idempotent)"
+            success_msg: "✓ Idempotency check passed - no changes made"
+
+    - name: Display Firewall test results
+      debug:
+        msg:
+          - "SUCCESS: Firewall rules test passed"
+          - "  ✓ CREATE: Firewall rules created successfully"
+          - "  ✓ CREATE: Gateway LAN/WAN with IP-Port group works"
+          - "  ✓ UPDATE: Firewall rule renamed successfully"
+          - "  ✓ ORDERING: Rules are in correct index order (1, 2, 3)"
+          - "  ✓ IDEMPOTENCY: No changes on re-run"

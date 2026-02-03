@@ -1,0 +1,162 @@
+---
+# PPSK (Private Pre-Shared Key) Profiles
+#
+# PPSK allows different passwords to assign devices to different VLANs on the same SSID.
+# This is useful for multi-tenant networks, device segmentation, or temporary access.
+
+ppsk_profiles:
+  # Example: Home network with VLAN names (RECOMMENDED)
+  - name: "Home-PPSK"
+    entries:
+      - name: "Trusted-Devices"
+        psk: "TrustedPass123!"
+        vlan: "Trusted"  # VLAN name from infra_networks.yml (recommended)
+      - name: "IoT-Devices"
+        psk: "IoTPass123!"
+        vlan: "IoT"  # VLAN name from infra_networks.yml (recommended)
+      - name: "Guest-Access"
+        psk: "GuestPass123!"
+        vlan: "30"  # VLAN ID also supported (for backward compatibility)
+
+  # Example: Multi-tenant building
+  - name: "Building-Tenants"
+    entries:
+      - name: "Tenant-1"
+        psk: "Tenant1Pass2024!"
+        vlan: "100"
+      - name: "Tenant-2"
+        psk: "Tenant2Pass2024!"
+        vlan: "101"
+      - name: "Tenant-3"
+        psk: "Tenant3Pass2024!"
+        vlan: "102"
+      - name: "Common-Areas"
+        psk: "CommonPass2024!"
+        vlan: "200"
+
+# Field Descriptions:
+#
+# name: PPSK profile name (used when creating WiFi SSIDs)
+# entries: List of PPSK entries (different passwords for different VLANs)
+#   - name: Entry name (descriptive, helps identify the purpose)
+#   - psk: Password for this entry
+#     - Minimum 8 characters
+#     - Must meet WPA2/WPA3 requirements
+#     - Use strong, unique passwords
+#   - vlan: VLAN name or ID to assign (optional)
+#     - VLAN NAME (recommended): References network name from infra_networks.yml
+#       - Example: "Trusted", "IoT", "Guest"
+#       - Automatically resolved to VLAN ID
+#       - Single source of truth - change VLAN ID in one place
+#     - VLAN ID (backward compatible): Direct VLAN number
+#       - Example: "10", "20", "30"
+#       - Can be string or integer
+#     - If omitted, uses SSID's default VLAN
+#   - mac: MAC address restriction (optional, advanced use)
+#     - Usually left empty ("")
+#     - Can restrict specific MAC to this password/VLAN
+#
+# How PPSK Works:
+# ===============
+# 1. Create a PPSK profile with multiple password entries
+# 2. Each password can optionally assign devices to a specific VLAN
+# 3. Create a WiFi SSID that references the PPSK profile
+# 4. Users see one SSID but are placed on different VLANs based on their password
+# 5. The SSID appears the same to all users - only the password differs
+#
+# Benefits:
+# =========
+# - Simplified WiFi management (one SSID instead of many)
+# - Network segmentation without revealing network structure
+# - Easy onboarding (give users appropriate password for their access level)
+# - Flexible access control (change VLANs by changing passwords)
+# - User-friendly (users don't need to select different SSIDs)
+#
+# Use Cases:
+# ==========
+# - Multi-tenant networks (apartments, office buildings, coworking spaces)
+# - Device type segmentation (IoT devices, smartphones, laptops)
+# - Access level management (admin, employee, contractor, guest)
+# - Temporary access (time-limited passwords for visitors)
+# - Family networks (kids vs. parents with different access)
+# - Department-based access in enterprises
+#
+# Limitations:
+# ============
+# - PPSK doesn't support 6GHz band (only 2.4GHz and 5GHz)
+# - Passwords are known to users (not suitable for high-security environments)
+# - Managing many passwords can be complex
+# - Password sharing reduces security
+#
+# Security Best Practices:
+# ========================
+# - Use strong, unique passwords for each entry
+# - Regularly rotate passwords (especially guest passwords)
+# - Consider WPA3-Personal for better security
+# - Use firewall rules to restrict inter-VLAN communication
+# - Monitor for password sharing across VLANs
+# - Document who has which password
+# - Use expiration for temporary access passwords
+#
+# Usage in SSID Configuration:
+# =============================
+# In wireless_ssids.yml, reference the profile:
+#
+#   wifi_ssids:
+#     - name: "MyNetwork"
+#       ppsk_profile: "Home-PPSK"  # Reference the PPSK profile
+#       enabled: true
+#       broadcast_ssid: true
+#       guest_network: true  # Usually true for PPSK SSIDs
+#       # NO password field - passwords come from PPSK profile
+#       # NO vlan field - VLANs assigned per password
+#
+# Advanced Example - MAC-based PPSK:
+# ===================================
+# You can restrict specific MACs to use only certain passwords:
+#
+#   ppsk_profiles:
+#     - name: "Restricted-Access"
+#       entries:
+#         - name: "Server-Access"
+#           psk: "ServerPass123!"
+#           vlan: "10"
+#           mac: "aa:bb:cc:dd:ee:ff"  # Only this MAC can use this password
+#
+# Note: Most use cases don't need MAC restriction (leave mac as "")
+#
+# Auto-Cleanup Feature:
+# =====================
+# PPSK profiles not defined in this file will be automatically deleted
+# if you enable auto-cleanup in your playbook:
+#
+#   vars:
+#     omada_auto_cleanup: true
+#
+# Benefits:
+# - Keeps your configuration in sync with reality
+# - Removes orphaned profiles automatically
+# - Ensures only defined profiles exist
+# - Helps maintain clean configuration
+#
+# To enable cleanup, set omada_auto_cleanup: true in:
+# - Playbook vars
+# - Group vars (group_vars/all/00_controller.yml)
+# - Host vars
+#
+# VLAN Name Resolution:
+# =====================
+# Use VLAN names instead of IDs for better maintainability:
+#
+# ✓ Recommended (VLAN name):
+#   vlan: "Trusted"    # References network name
+#
+# ✓ Also works (VLAN ID):
+#   vlan: "10"         # Direct VLAN ID
+#   vlan: 10           # Integer also works
+#
+# Benefits of using VLAN names:
+# - Change VLAN ID in one place (infra_networks.yml)
+# - More readable configuration
+# - Less error-prone
+# - Self-documenting

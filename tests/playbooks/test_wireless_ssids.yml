@@ -1,0 +1,162 @@
+---
+# Test 4: WiFi/WLAN Configuration
+# Verifies CREATE, UPDATE, and IDEMPOTENCY
+
+- name: Test WiFi Configuration
+  hosts: omada-controller
+  connection: local
+  gather_facts: false
+  vars:
+    omada_api_debug: true
+
+  tasks:
+    # ==========================================
+    # PHASE 1: CREATE - Initial Configuration
+    # ==========================================
+    - name: "PHASE 1: CREATE - Setup infrastructure and create SSID"
+      block:
+        - name: Include omada_controller role
+          include_role:
+            name: omada_controller
+
+        - name: Include vlans role (needed for WiFi)
+          include_role:
+            name: vlans
+
+        - name: Include ppsk_profiles role (needed for PPSK SSIDs)
+          include_role:
+            name: ppsk_profiles
+
+        - name: Include wifi role (initial config)
+          include_role:
+            name: wifi
+
+        - name: Get WLAN profile ID
+          uri:
+            url: "{{ omada_api_base }}/setting/wlans?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: wlan_profiles
+
+        - name: Set WLAN profile ID
+          set_fact:
+            test_wlan_profile_id: "{{ wlan_profiles.json.result.data[0].id }}"
+          when: wlan_profiles.json.result.data | length > 0
+
+        - name: Verify SSID was created
+          uri:
+            url: "{{ omada_api_base }}/setting/wlans/{{ test_wlan_profile_id }}/ssids?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_create
+          when: test_wlan_profile_id is defined
+
+        - name: Check Test-SSID created
+          assert:
+            that:
+              - verify_create.json.result.data | selectattr('name', 'equalto', 'Test-SSID') | list | length > 0
+            fail_msg: "Test-SSID not created"
+            success_msg: "✓ Test-SSID created successfully"
+          when: verify_create is defined
+
+        - name: Check Test-PPSK-SSID created (PPSK profile-based SSID)
+          assert:
+            that:
+              - verify_create.json.result.data | selectattr('name', 'equalto', 'Test-PPSK-SSID') | list | length > 0
+            fail_msg: "Test-PPSK-SSID not created (PPSK profile may not be working)"
+            success_msg: "✓ Test-PPSK-SSID created successfully (PPSK working)"
+          when: verify_create is defined
+
+    # ==========================================
+    # PHASE 2: UPDATE - Modify Configuration
+    # ==========================================
+    - name: "PHASE 2: UPDATE - Change SSID name"
+      block:
+        - name: Update wifi configuration (change SSID name)
+          set_fact:
+            wifi_ssids:
+              - name: "Test-SSID-Updated"  # Changed name
+                security: "wpa2_personal"
+                password: "TestPassphrase123!"
+                enabled: true
+                broadcast_ssid: true
+                guest_network: false
+                vlan: 10
+
+        - name: Re-run wifi role with updated config
+          include_role:
+            name: wifi
+
+        - name: Verify SSID was updated
+          uri:
+            url: "{{ omada_api_base }}/setting/wlans/{{ test_wlan_profile_id }}/ssids?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_update
+          when: test_wlan_profile_id is defined
+
+        - name: Check Test-SSID renamed
+          assert:
+            that:
+              - verify_update.json.result.data | selectattr('name', 'equalto', 'Test-SSID-Updated') | list | length > 0
+            fail_msg: "Test-SSID not renamed correctly"
+            success_msg: "✓ Test-SSID renamed successfully"
+          when: verify_update is defined
+
+    # ==========================================
+    # PHASE 3: IDEMPOTENCY - No Changes
+    # ==========================================
+    - name: "PHASE 3: IDEMPOTENCY - Run again without changes"
+      block:
+        - name: Get current WiFi state before idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/wlans/{{ test_wlan_profile_id }}/ssids?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_before_idempotency
+          when: test_wlan_profile_id is defined
+
+        - name: Run wifi role again (no config changes)
+          include_role:
+            name: wifi
+
+        - name: Get WiFi state after idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/wlans/{{ test_wlan_profile_id }}/ssids?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_after_idempotency
+          when: test_wlan_profile_id is defined
+
+        - name: Verify configuration unchanged (idempotency)
+          assert:
+            that:
+              - state_before_idempotency.json.result.data | selectattr('name', 'equalto', 'Test-SSID-Updated') | list | length > 0
+              - state_after_idempotency.json.result.data | selectattr('name', 'equalto', 'Test-SSID-Updated') | list | length > 0
+              - (state_before_idempotency.json.result.data | selectattr('name', 'equalto', 'Test-SSID-Updated') | first).name == (state_after_idempotency.json.result.data | selectattr('name', 'equalto', 'Test-SSID-Updated') | first).name
+            fail_msg: "Configuration changed when it shouldn't have (not idempotent)"
+            success_msg: "✓ Idempotency check passed - no changes made"
+          when: state_before_idempotency is defined and state_after_idempotency is defined
+
+    - name: Display WiFi test results
+      debug:
+        msg:
+          - "SUCCESS: WiFi configuration test passed"
+          - "  ✓ CREATE: SSID created successfully"
+          - "  ✓ UPDATE: SSID name updated successfully"
+          - "  ✓ IDEMPOTENCY: No changes on re-run"

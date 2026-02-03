@@ -1,0 +1,126 @@
+---
+# Port Forwarding / NAT Rules
+#
+# Forward external ports to internal services.
+# Allows access to services from the internet.
+
+port_forward_rules:
+  # Web Server - HTTP
+  - name: "web-server-http"
+    enabled: true
+    external_port: "80"
+    forward_device: "server-01"  # Device name from infra_devices.yml
+    forward_port: "8080"
+    protocol: tcp
+    description: "Public web server"
+
+  # Web Server - HTTPS
+  - name: "web-server-https"
+    enabled: true
+    external_port: "443"
+    forward_device: "server-01"  # Device name from infra_devices.yml
+    forward_port: "8443"
+    protocol: tcp
+    description: "Public web server (SSL)"
+
+  # SSH Access
+  - name: "ssh-server"
+    enabled: false  # Disabled for security
+    external_port: "2222"
+    forward_device: "server-01"  # Device name from infra_devices.yml
+    forward_port: "22"
+    protocol: tcp
+    description: "SSH access (use VPN instead!)"
+
+  # Game Server on specific WANs (Multi-WAN example) - RECOMMENDED
+  - name: "game-server"
+    enabled: true
+    external_port: "27015"
+    forward_device: "server-01"
+    forward_port: "27015"
+    protocol: udp
+    wan_interfaces: ["WAN2"]  # Apply to specific WAN(s)
+    description: "Game server on secondary WAN"
+
+  # Service on multiple WANs
+  - name: "multi-wan-service"
+    enabled: true
+    external_port: "8080"
+    forward_device: "server-01"
+    forward_port: "8080"
+    protocol: tcp
+    wan_interfaces: ["SFP WAN/LAN1", "WAN2"]  # Apply to multiple WANs
+    description: "Service accessible via both WANs"
+
+# Field Descriptions:
+#
+# name: Rule name (descriptive)
+# enabled: Whether rule is active
+# external_port: Port on WAN side (what internet sees)
+# forward_device: Device name (from infra_devices.yml) - RECOMMENDED
+#   - Device must be defined in infra_devices.yml with 'ip' field
+#   - IP is automatically resolved from device definition
+#   - Keeps configuration consistent and maintainable
+# forward_ip: Internal IP to forward to - LEGACY (use forward_device instead)
+#   - Direct IP address (e.g., "192.168.10.10")
+#   - Only use if device is not in device registry
+# forward_port: Port on LAN side (service's actual port)
+# protocol: Protocol type
+#   - tcp: TCP traffic
+#   - udp: UDP traffic
+#   - both: Both TCP and UDP
+# wan_interfaces: List of WAN interface names (OPTIONAL) - RECOMMENDED
+#   - Array of human-readable WAN port names
+#   - Examples: ["SFP WAN/LAN1"], ["WAN2"], ["SFP WAN/LAN1", "WAN2"]
+#   - If not specified, rule applies to ALL ACTIVE WANs (default behavior)
+#   - Useful for multi-WAN setups where you want specific rules on specific WANs
+# wan_interface: WAN interface name (OPTIONAL) - LEGACY (use wan_interfaces instead)
+#   - Singular form for backward compatibility
+#   - Prefer wan_interfaces array for new configurations
+# description: Human-readable note
+#
+# NOTE: Use either 'forward_device' OR 'forward_ip', not both.
+#       'forward_device' is recommended for consistency with DHCP reservations.
+#
+# Multi-WAN Configuration:
+# =======================
+# If you have multiple WAN interfaces (e.g., ER7206 with SFP WAN/LAN1 and WAN2),
+# you can control which WANs a port forwarding rule applies to:
+#
+# Default Behavior (no wan_interfaces specified):
+# - Rule applies to ALL ACTIVE WAN interfaces
+# - Best for services that should be accessible from any WAN
+#
+# Specific WAN(s) (wan_interfaces array):
+# - wan_interfaces: ["WAN2"]  # Single WAN
+# - wan_interfaces: ["SFP WAN/LAN1", "WAN2"]  # Multiple WANs
+# - Rule applies only to specified WANs
+# - Best for WAN-specific routing or load balancing
+#
+# Priority: wan_interfaces > wan_interface (legacy) > interface_wan_port_ids > all active
+#
+# Security Warnings:
+# - Port forwarding exposes services to the internet
+# - Only forward services that need public access
+# - Use non-standard external ports to reduce scanning
+# - Keep forwarded services updated and patched
+# - Use strong authentication (keys, not passwords)
+# - Consider VPN instead of port forwarding for admin access
+# - Monitor logs for unauthorized access attempts
+#
+# Best Practices:
+# - Use HTTPS (443) instead of HTTP (80) when possible
+# - Change default ports (e.g., 2222 instead of 22 for SSH)
+# - Forward only specific IPs, not entire subnets
+# - Disable unused rules
+# - Use firewall rules to restrict source IPs if possible
+# - Consider using reverse proxy (nginx, Traefik) for web services
+#
+# Common Services:
+# - Web servers: 80 (HTTP), 443 (HTTPS)
+# - SSH: 22 (use VPN instead!)
+# - RDP: 3389 (use VPN instead!)
+# - Game servers: varies by game
+# - VPN: 51820 (WireGuard), 1194 (OpenVPN)
+# - Plex: 32400
+# - Home Assistant: 8123

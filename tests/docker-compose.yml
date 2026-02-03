@@ -1,0 +1,41 @@
+---
+version: '3.8'
+
+services:
+  # Omada Controller for testing
+  omada-controller:
+    image: mbentley/omada-controller:6.0
+    container_name: omada-test-controller
+    environment:
+      - MANAGE_HTTP_PORT=8088
+      - MANAGE_HTTPS_PORT=8043
+      - PORTAL_HTTP_PORT=8088
+      - PORTAL_HTTPS_PORT=8843
+      - SHOW_SERVER_LOGS=true
+      - SHOW_MONGODB_LOGS=false
+      - TZ=Europe/Prague
+    ports:
+      - "8043:8043"   # Management HTTPS
+      - "8088:8088"   # Management HTTP
+      - "27001:27001/udp"  # Discovery
+      - "29810:29810/udp"  # Manager v1
+      - "29811-29814:29811-29814"  # EAP Discovery
+    volumes:
+      - omada-data:/opt/tplink/EAPController/data
+      - omada-logs:/opt/tplink/EAPController/logs
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "https://localhost:8043/api/info", "-k"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+volumes:
+  omada-data:
+  omada-logs:
+
+networks:
+  test-network:
+    driver: bridge

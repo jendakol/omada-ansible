@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Omada Controller Configuration",
+  "description": "Schema for controller connection settings",
+  "type": "object",
+  "required": [
+    "omada_controller_url",
+    "omada_site",
+    "omada_username",
+    "omada_password"
+  ],
+  "properties": {
+    "omada_controller_url": {
+      "type": "string",
+      "pattern": "^https://.*",
+      "description": "Controller URL (must use HTTPS)"
+    },
+    "omada_site": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Site name as configured in controller"
+    },
+    "omada_username": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Controller username (use Ansible Vault)"
+    },
+    "omada_password": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Controller password (use Ansible Vault)"
+    },
+    "verify_ssl": {
+      "type": "boolean",
+      "default": true,
+      "description": "Verify SSL certificates"
+    },
+    "omada_auto_cleanup": {
+      "type": "boolean",
+      "default": false,
+      "description": "Auto-remove unmanaged resources"
+    },
+    "omada_api_debug": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable API debug logging"
+    }
+  }
+}

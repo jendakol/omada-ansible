@@ -1,0 +1,14 @@
+---
+# Test Controller Configuration
+# Uses production controller with isolated test site
+
+omada_controller_url: "https://omada.home.jenda.eu"
+omada_site: "Test-Automation"  # Isolated test site (will be created)
+omada_username: "{{ vault_omada_username }}"  # Same credentials as production
+omada_password: "{{ vault_omada_password }}"
+verify_ssl: true
+omada_auto_cleanup: true  # Safe - only affects Test-Automation site
+
+# API Retry Configuration
+omada_api_retries: 3
+omada_api_retry_delay: 5

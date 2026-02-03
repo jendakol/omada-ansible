@@ -1,0 +1,334 @@
+---
+# Ensure a single IP group or IP-Port group exists with correct configuration
+# Called per IP group item from main.yml
+# group_type variable: 0 = IP group, 1 = IP-Port group
+
+- name: Find existing IP group by name (type=0)
+  set_fact:
+    _existing_ip_group: >-
+      {{
+        omada_ip_groups_existing
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', ip_group_item.name)
+        | list
+        | first
+        | default('')
+      }}
+  when: group_type == 0
+  tags: [ip_groups]
+
+- name: Find existing IP-Port group by name (type=1)
+  set_fact:
+    _existing_ip_group: >-
+      {{
+        omada_ip_port_groups_existing
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', ip_group_item.name)
+        | list
+        | first
+        | default('')
+      }}
+  when: group_type == 1
+  tags: [ip_groups]
+
+- name: Debug existing group match for {{ ip_group_item.name }}
+  debug:
+    msg: "Existing {{ 'IP-Port' if group_type == 1 else 'IP' }} group '{{ ip_group_item.name }}': {{ 'Found' if _existing_ip_group != '' else 'Not found' }}"
+  when: omada_api_debug | default(false)
+  tags: [ip_groups]
+
+- name: Debug existing IP group object structure
+  debug:
+    var: _existing_ip_group
+  when: _existing_ip_group != ''
+  tags: [ip_groups]
+
+- name: Initialize IP lists
+  set_fact:
+    _ip_list: []
+    _ipv6_list: []
+  tags: [ip_groups]
+
+- name: Build device name to IP mapping for this role
+  set_fact:
+    _ip_group_device_map: >-
+      {{
+        dict(
+          devices | default([])
+          | selectattr('ip', 'defined')
+          | map(attribute='name')
+          | zip(
+            devices | default([])
+            | selectattr('ip', 'defined')
+            | map(attribute='ip')
+          )
+        )
+      }}
+  when: ip_group_item.devices is defined
+  tags: [ip_groups]
+
+- name: Resolve device names to IPs and add to IP list (with /32 mask)
+  set_fact:
+    _ip_list: "{{ _ip_list | default([]) + [{'ip': _ip_group_device_map[item], 'mask': 32, 'description': 'Device: ' + item}] }}"
+  loop: "{{ ip_group_item.devices | default([]) }}"
+  when: ip_group_item.devices is defined and item in _ip_group_device_map
+  tags: [ip_groups]
+
+- name: Warn about unresolved devices
+  debug:
+    msg: "WARNING: IP group '{{ ip_group_item.name }}': Device '{{ item }}' not found in device registry or has no IP address defined. Skipping."
+  loop: "{{ ip_group_item.devices | default([]) }}"
+  when: ip_group_item.devices is defined and (item not in _ip_group_device_map)
+  tags: [ip_groups]
+
+- name: Build IPv4 IP list from addresses
+  set_fact:
+    _ip_list: "{{ _ip_list | default([]) + [{'ip': item.split('/')[0], 'mask': item.split('/')[1] | int, 'description': ''}] }}"
+  loop: "{{ ip_group_item.addresses | default([]) }}"
+  when: ip_group_item.addresses is defined
+  tags: [ip_groups]
+
+- name: Build IPv4 IP list from detailed entries
+  set_fact:
+    _ip_list: "{{ ip_group_item.ip_list | default([]) }}"
+  when: ip_group_item.ip_list is defined
+  tags: [ip_groups]
+
+- name: Build IPv6 list from addresses (uses prefix not mask)
+  set_fact:
+    _ipv6_list: "{{ _ipv6_list | default([]) + [{'ip': item.split('/')[0], 'prefix': item.split('/')[1], 'description': ''}] }}"
+  loop: "{{ ip_group_item.ipv6_addresses | default([]) }}"
+  when: ip_group_item.ipv6_addresses is defined and (ip_group_item.ipv6_addresses | length > 0)
+  tags: [ip_groups]
+
+- name: Build port list for IP-Port groups
+  set_fact:
+    _port_list: "{{ ip_group_item.ports | default([]) | map('string') | list }}"
+  when: group_type == 1
+  tags: [ip_groups]
+
+- name: Determine IP group type (0 for IPv4, 3 for IPv6)
+  set_fact:
+    _ip_group_type: "{{ 3 if (_ipv6_list | default([]) | length > 0) else 0 }}"
+  tags: [ip_groups]
+
+- name: Build IP group configuration for creation (IPv4 IP group)
+  set_fact:
+    _ip_group_config:
+      name: "{{ ip_group_item.name }}"
+      type: "{{ group_type }}"
+      ipList: "{{ _ip_list }}"
+      ipv6List: null
+      macAddressList: null
+      portList: null
+      countryList: null
+      description: "{{ ip_group_item.description | default('') }}"
+      portType: null
+      portMaskList: null
+      domainNamePort: null
+      ouiList: null
+      count: 0
+  when: (_existing_ip_group == '' or _existing_ip_group is none) and (_ip_group_type | int == 0) and (group_type == 0)
+  tags: [ip_groups]
+
+- name: Build IP-Port group configuration for creation (IPv4 IP-Port group)
+  set_fact:
+    _ip_group_config:
+      name: "{{ ip_group_item.name }}"
+      type: 1
+      ipList: "{{ _ip_list }}"
+      ipv6List: null
+      macAddressList: null
+      portList: "{{ _port_list | default([]) }}"
+      countryList: null
+      description: "{{ ip_group_item.description | default('') }}"
+      portType: 0
+      portMaskList: []
+      domainNamePort: null
+      ouiList: null
+      count: 0
+  when: (_existing_ip_group == '' or _existing_ip_group is none) and (group_type == 1)
+  tags: [ip_groups]
+
+- name: Build IP group configuration for creation (IPv6)
+  set_fact:
+    _ip_group_config:
+      name: "{{ ip_group_item.name }}"
+      type: 3
+      ipList: null
+      ipv6List: "{{ _ipv6_list }}"
+      macAddressList: null
+      portList: null
+      countryList: null
+      description: "{{ ip_group_item.description | default('') }}"
+      portType: null
+      portMaskList: null
+      domainNamePort: null
+      ouiList: null
+      count: 0
+  when: (_existing_ip_group == '' or _existing_ip_group is none) and (_ip_group_type | int == 3)
+  tags: [ip_groups]
+
+- name: Initialize IP list with keys
+  set_fact:
+    _ip_list_with_keys: []
+  when: _existing_ip_group != '' and _existing_ip_group is not none and (_ip_group_type | int == 0)
+  tags: [ip_groups]
+
+- name: Add key field to IPv4 IP list for update
+  set_fact:
+    _ip_list_with_keys: "{{ _ip_list_with_keys + [item | combine({'key': (1766505240000 + idx * 100) | int})] }}"
+  loop: "{{ _ip_list }}"
+  loop_control:
+    index_var: idx
+  when: _existing_ip_group != '' and _existing_ip_group is not none and (_ip_group_type | int == 0)
+  tags: [ip_groups]
+
+- name: Compare existing and desired IPs (IPv4)
+  set_fact:
+    _ip_lists_match: >-
+      {{
+        (_existing_ip_group.ipList | default([]) | map(attribute='ip') | list | sort) ==
+        (_ip_list | map(attribute='ip') | list | sort)
+      }}
+  when: _existing_ip_group != '' and _existing_ip_group is not none and (_ip_group_type | int == 0)
+  tags: [ip_groups]
+
+- name: Build IP group configuration for update (IPv4 IP group)
+  set_fact:
+    _ip_group_config:
+      name: "{{ ip_group_item.name }}"
+      type: "{{ group_type }}"
+      resource: 0
+      ipList: "{{ _ip_list_with_keys | default(_ip_list) }}"
+      ipv6List: null
+      macAddressList: null
+      portList: null
+      countryList: null
+      portType: null
+      portMaskList: null
+      domainNamePort: null
+      ouiList: null
+      count: "{{ _existing_ip_group.count | default((_ip_list | default([]) | length)) }}"
+  when: _existing_ip_group != '' and _existing_ip_group is not none and (_ip_group_type | int == 0) and (group_type == 0)
+  tags: [ip_groups]
+
+- name: Build IP-Port group configuration for update (IPv4 IP-Port group)
+  set_fact:
+    _ip_group_config:
+      name: "{{ ip_group_item.name }}"
+      type: 1
+      resource: 0
+      ipList: "{{ _ip_list_with_keys | default(_ip_list) }}"
+      ipv6List: null
+      macAddressList: null
+      portList: "{{ _port_list | default([]) }}"
+      countryList: null
+      portType: 0
+      portMaskList: []
+      domainNamePort: null
+      ouiList: null
+      count: "{{ _existing_ip_group.count | default((_ip_list | default([]) | length) + (_port_list | default([]) | length)) }}"
+  when: _existing_ip_group != '' and _existing_ip_group is not none and (group_type == 1)
+  tags: [ip_groups]
+
+- name: Build IP group configuration for update (IPv6)
+  set_fact:
+    _ip_group_config:
+      name: "{{ ip_group_item.name }}"
+      type: 3
+      resource: 0
+      ipList: null
+      ipv6List: "{{ _ipv6_list }}"
+      macAddressList: null
+      portList: null
+      countryList: null
+      portType: null
+      portMaskList: null
+      domainNamePort: null
+      ouiList: null
+      count: "{{ _existing_ip_group.count | default((_ipv6_list | default([]) | length)) }}"
+  when: _existing_ip_group != '' and _existing_ip_group is not none and (_ip_group_type | int == 3)
+  tags: [ip_groups]
+
+- name: Debug IP group config to be sent
+  debug:
+    var: _ip_group_config
+  when: omada_api_debug | default(false)
+  tags: [ip_groups]
+
+- name: Create IP group {{ ip_group_item.name }} if it doesn't exist
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/groups"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _ip_group_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 201]
+    return_content: true
+  register: _create_ip_group_result
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _create_ip_group_result is succeeded
+  when: _existing_ip_group == '' or _existing_ip_group is none
+  changed_when: _create_ip_group_result.status in [200, 201] and (_create_ip_group_result.json.errorCode | default(1)) == 0
+  failed_when: _create_ip_group_result.status not in [200, 201] or (_create_ip_group_result.json.errorCode | default(1)) != 0
+  tags: [ip_groups]
+
+- name: Update existing IP groups list after creation
+  set_fact:
+    omada_ip_groups_existing: "{{ omada_ip_groups_existing + [_create_ip_group_result.json.result | default(_create_ip_group_result.json.data)] }}"
+  when: _create_ip_group_result is defined and _create_ip_group_result.changed
+  tags: [ip_groups]
+
+- name: Update IP group name-to-ID mapping after creation
+  set_fact:
+    omada_ip_group_map: "{{ omada_ip_group_map | default({}) | combine({ip_group_item.name: _create_ip_group_result.json.result}) }}"
+  when: _create_ip_group_result is defined and _create_ip_group_result.changed
+  tags: [ip_groups]
+
+- name: Update IPv4 IP group {{ ip_group_item.name }} if it exists
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/groups/{{ group_type }}/{{ _existing_ip_group.groupId }}"
+    method: PATCH
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _ip_group_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  register: _update_ip_group_result
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _update_ip_group_result is succeeded
+  when:
+    - _existing_ip_group != '' and _existing_ip_group is not none
+    - _ip_group_type | int == 0
+    - _ip_lists_match | default(false) == false or (group_type == 1)
+  changed_when: _update_ip_group_result.status in [200, 204] and (_update_ip_group_result.json.errorCode | default(0)) == 0
+  failed_when: _update_ip_group_result.status not in [200, 204] or (_update_ip_group_result.json.errorCode | default(1)) != 0
+  tags: [ip_groups]
+
+- name: Update IPv6 IP group {{ ip_group_item.name }} if it exists
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/groups/3/{{ _existing_ip_group.groupId }}"
+    method: PATCH
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _ip_group_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  register: _update_ip_group_result
+  when: _existing_ip_group != '' and _existing_ip_group is not none and (_ip_group_type | int == 3)
+  changed_when: _update_ip_group_result.status in [200, 204] and (_update_ip_group_result.json.errorCode | default(0)) == 0
+  failed_when: _update_ip_group_result.status not in [200, 204] or (_update_ip_group_result.json.errorCode | default(1)) != 0
+  tags: [ip_groups]
+
+- name: Debug IP group operation result
+  debug:
+    msg:
+      - "IP group '{{ ip_group_item.name }}': {{ 'Created' if _create_ip_group_result is defined and _create_ip_group_result.changed else 'Updated' if _update_ip_group_result is defined and _update_ip_group_result.changed else 'No changes' }}"
+  when: omada_api_debug | default(false)
+  tags: [ip_groups]

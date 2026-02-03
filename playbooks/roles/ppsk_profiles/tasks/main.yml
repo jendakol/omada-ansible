@@ -1,0 +1,140 @@
+---
+# PPSK (Private Pre-Shared Key) Profile Management
+# Manages PPSK profiles for WiFi networks with per-password VLAN assignment
+
+- name: Skip PPSK profiles when not defined
+  debug:
+    msg: "No PPSK profiles defined - skipping PPSK configuration"
+  when: ppsk_profiles | default([]) | length == 0
+  tags: [ppsk]
+
+- name: Fetch existing PPSK profiles
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/ppsk?type=0"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_ppsk_resp
+  changed_when: false
+  failed_when: false
+  when: ppsk_profiles | default([]) | length > 0
+  tags: [ppsk]
+
+- name: Check if PPSK is supported
+  set_fact:
+    _ppsk_supported: "{{ omada_ppsk_resp.status == 200 and (omada_ppsk_resp.json.errorCode | default(1)) == 0 }}"
+  when: ppsk_profiles | default([]) | length > 0
+  tags: [ppsk]
+
+- name: Warn if PPSK not supported
+  debug:
+    msg: "WARNING: PPSK API endpoint not available or not supported on this controller/gateway setup. Skipping PPSK configuration."
+  when: ppsk_profiles | default([]) | length > 0 and not _ppsk_supported
+  tags: [ppsk]
+
+- name: Build list of existing PPSK profiles
+  set_fact:
+    omada_ppsk_existing: "{{ omada_ppsk_resp.json.result | default([]) }}"
+  when: _ppsk_supported | default(false)
+  tags: [ppsk]
+
+- name: Debug existing PPSK profiles
+  debug:
+    msg: "Found {{ omada_ppsk_existing | length }} existing PPSK profiles"
+  when: _ppsk_supported and omada_api_debug | default(false)
+  tags: [ppsk]
+
+- name: Initialize PPSK profile name-to-ID mapping
+  set_fact:
+    omada_ppsk_profile_map: {}
+  when: _ppsk_supported | default(false)
+  tags: [ppsk]
+
+- name: Build PPSK profile name-to-ID mapping from existing profiles
+  set_fact:
+    omada_ppsk_profile_map: "{{ omada_ppsk_profile_map | default({}) | combine({item.profileName: item.id}) }}"
+  loop: "{{ omada_ppsk_existing | default([]) }}"
+  loop_control:
+    label: "{{ item.profileName }}"
+  when: _ppsk_supported | default(false)
+  tags: [ppsk]
+
+- name: Debug PPSK profile mapping
+  debug:
+    msg: "PPSK profile name -> ID mapping: {{ omada_ppsk_profile_map }}"
+  when: _ppsk_supported and omada_api_debug | default(false)
+  tags: [ppsk]
+
+# ==========================================
+# CREATE/UPDATE PHASE - Run FIRST to ensure profiles are in place
+# ==========================================
+
+- name: Ensure each PPSK profile
+  include_tasks: ensure_ppsk_profile.yml
+  loop: "{{ ppsk_profiles }}"
+  loop_control:
+    loop_var: ppsk_item
+    label: "{{ ppsk_item.name }}"
+  when: _ppsk_supported
+  tags: [ppsk]
+
+# ==========================================
+# CLEANUP PHASE - Run LAST after all profiles are in place (secure)
+# ==========================================
+
+- name: Find PPSK profiles to clean up (not in playbook config)
+  set_fact:
+    _ppsk_to_delete: >-
+      {{
+        omada_ppsk_existing
+        | rejectattr('profileName', 'in', ppsk_profiles | default([]) | map(attribute='name') | list)
+        | list
+      }}
+  when: _ppsk_supported and omada_auto_cleanup | default(false)
+  tags: [ppsk, cleanup]
+
+- name: Warning about PPSK profiles to be deleted
+  debug:
+    msg:
+      - "WARNING: Auto-cleanup is enabled!"
+      - "The following PPSK profiles will be DELETED:"
+      - "{{ _ppsk_to_delete | map(attribute='profileName') | list | join(', ') }}"
+  when: _ppsk_supported and omada_auto_cleanup | default(false) and (_ppsk_to_delete | default([]) | length > 0)
+  tags: [ppsk, cleanup]
+
+- name: Delete PPSK profiles not defined in playbook (auto-cleanup)
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/ppsk/{{ item.id }}"
+    method: DELETE
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  loop: "{{ _ppsk_to_delete | default([]) }}"
+  loop_control:
+    label: "{{ item.profileName }}"
+  register: _delete_ppsk_results
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _delete_ppsk_results is succeeded
+  when: _ppsk_supported and omada_auto_cleanup | default(false) and (_ppsk_to_delete | default([]) | length > 0)
+  changed_when: _delete_ppsk_results.status in [200, 204]
+  failed_when: _delete_ppsk_results.status not in [200, 204]
+  tags: [ppsk, cleanup]
+
+- name: Debug cleanup results
+  debug:
+    msg: "Deleted {{ _ppsk_to_delete | default([]) | length }} PPSK profile(s)"
+  when: _ppsk_supported and omada_auto_cleanup | default(false)
+  tags: [ppsk, cleanup]
+
+- name: Summary of PPSK configuration
+  debug:
+    msg:
+      - "PPSK Profile Configuration Complete"
+      - "  Configured: {{ ppsk_profiles | length }} profile(s)"
+      - "  Deleted: {{ _ppsk_to_delete | default([]) | length }} profile(s)"
+  when: _ppsk_supported
+  tags: [ppsk]

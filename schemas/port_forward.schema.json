@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Port Forwarding Configuration",
+  "description": "Schema for port forwarding/NAT rules",
+  "type": "object",
+  "required": ["port_forward_rules"],
+  "properties": {
+    "port_forward_rules": {
+      "type": "array",
+      "description": "List of port forwarding rules",
+      "items": {
+        "type": "object",
+        "required": ["name", "enabled", "external_port", "forward_port", "protocol"],
+        "oneOf": [
+          {
+            "required": ["forward_device"],
+            "not": {"required": ["forward_ip"]}
+          },
+          {
+            "required": ["forward_ip"],
+            "not": {"required": ["forward_device"]}
+          }
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Rule name"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable rule"
+          },
+          "external_port": {
+            "type": "string",
+            "pattern": "^([0-9]{1,5}|[0-9]{1,5}-[0-9]{1,5})$",
+            "description": "External port or range"
+          },
+          "forward_device": {
+            "type": "string",
+            "description": "Device name (from devices list) - RECOMMENDED"
+          },
+          "forward_ip": {
+            "type": "string",
+            "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$",
+            "description": "Internal IP to forward to - LEGACY (use forward_device)"
+          },
+          "forward_port": {
+            "type": "string",
+            "pattern": "^([0-9]{1,5}|[0-9]{1,5}-[0-9]{1,5})$",
+            "description": "Internal port or range"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": ["tcp", "udp", "both"],
+            "description": "Protocol type"
+          },
+          "wan_interfaces": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "List of WAN interface names (recommended, e.g., ['SFP WAN/LAN1'], ['WAN2']). If not specified, applies to all active WANs."
+          },
+          "wan_interface": {
+            "type": "string",
+            "description": "WAN interface name (legacy, use wan_interfaces instead)"
+          },
+          "interface_wan_port_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Direct WAN port UUIDs (advanced, not typically needed)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Rule description"
+          }
+        }
+      }
+    }
+  }
+}

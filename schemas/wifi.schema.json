@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WiFi Configuration",
+  "description": "Schema for WiFi SSID settings",
+  "type": "object",
+  "required": ["wifi_ssids"],
+  "properties": {
+    "wifi_ssids": {
+      "type": "array",
+      "description": "List of WiFi SSIDs",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "oneOf": [
+          {
+            "description": "Regular SSID with password",
+            "required": ["password", "security"],
+            "not": {"required": ["ppsk_profile"]}
+          },
+          {
+            "description": "PPSK-enabled SSID",
+            "required": ["ppsk_profile"],
+            "not": {"required": ["password", "vlan"]}
+          }
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "description": "SSID name (max 32 characters)"
+          },
+          "ppsk_profile": {
+            "type": "string",
+            "minLength": 1,
+            "description": "PPSK profile name (from ppsk_profiles) - use instead of password/vlan"
+          },
+          "vlan": {
+            "oneOf": [
+              {"type": "string"},
+              {"type": "integer", "minimum": 1, "maximum": 4094}
+            ],
+            "description": "VLAN ID (not used with PPSK)"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "description": "WiFi password (not used with PPSK, min 8 characters)"
+          },
+          "security": {
+            "type": "string",
+            "enum": ["wpa2_personal", "wpa3_personal", "wpa2_wpa3_personal", "wpa2-personal", "wpa3-personal", "wpa2-wpa3-personal"],
+            "description": "Security type"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable SSID"
+          },
+          "broadcast_ssid": {
+            "type": "boolean",
+            "default": true,
+            "description": "Broadcast SSID (set false to hide)"
+          },
+          "guest_network": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable guest network isolation"
+          },
+          "band": {
+            "type": "string",
+            "enum": ["2.4ghz", "5ghz", "6ghz", "2.4+5ghz", "2.4+5+6ghz"],
+            "default": "2.4+5+6ghz",
+            "description": "WiFi band (PPSK doesn't support 6GHz)"
+          },
+          "mac_based_vlan": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable MAC-based VLAN assignment (not yet implemented)"
+          },
+          "default_network": {
+            "type": "string",
+            "description": "Default network for unknown devices (MAC-based VLAN)"
+          }
+        }
+      }
+    }
+  }
+}

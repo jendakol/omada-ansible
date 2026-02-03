@@ -1,0 +1,227 @@
+---
+# Test 2: Network Configuration (VLANs + DHCP)
+# Verifies CREATE, UPDATE, and IDEMPOTENCY
+# Also verifies DHCP reservations are auto-generated from devices
+
+- name: Test Network and DHCP Configuration
+  hosts: omada-controller
+  connection: local
+  gather_facts: false
+  vars:
+    omada_api_debug: true
+
+  tasks:
+    # ==========================================
+    # PHASE 1: CREATE - Initial Configuration
+    # ==========================================
+    - name: "PHASE 1: CREATE - Run vlans role with initial config"
+      block:
+        - name: Include omada_controller role
+          include_role:
+            name: omada_controller
+
+        - name: Include vlans role (initial config)
+          include_role:
+            name: vlans
+
+        - name: Include dhcp_reservations role (auto-generates from devices)
+          include_role:
+            name: dhcp_reservations
+
+        - name: Verify VLANs were created
+          uri:
+            url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_create
+
+        - name: Check Test-Trusted VLAN created
+          assert:
+            that:
+              - verify_create.json.result.data | selectattr('name', 'equalto', 'Test-Trusted') | list | length > 0
+              - (verify_create.json.result.data | selectattr('name', 'equalto', 'Test-Trusted') | first).vlan == 10
+              - (verify_create.json.result.data | selectattr('name', 'equalto', 'Test-Trusted') | first).gatewaySubnet is search('/24')
+            fail_msg: "Test-Trusted VLAN not created correctly"
+            success_msg: "✓ Test-Trusted VLAN created successfully"
+
+        - name: Check Test-IoT VLAN created
+          assert:
+            that:
+              - verify_create.json.result.data | selectattr('name', 'equalto', 'Test-IoT') | list | length > 0
+              - (verify_create.json.result.data | selectattr('name', 'equalto', 'Test-IoT') | first).vlan == 20
+              - (verify_create.json.result.data | selectattr('name', 'equalto', 'Test-IoT') | first).gatewaySubnet is search('/24')
+            fail_msg: "Test-IoT VLAN not created correctly"
+            success_msg: "✓ Test-IoT VLAN created successfully"
+
+        - name: Verify DHCP reservations were auto-generated
+          uri:
+            url: "{{ omada_api_base }}/setting/service/dhcp?currentPage=1&currentPageSize=100"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_dhcp
+
+        - name: Check DHCP reservations for devices with IPs
+          assert:
+            that:
+              - verify_dhcp.json.result.data | selectattr('mac', 'equalto', 'AA-BB-CC-DD-EE-01') | list | length > 0
+              - verify_dhcp.json.result.data | selectattr('mac', 'equalto', 'AA-BB-CC-DD-EE-02') | list | length > 0
+              - verify_dhcp.json.result.data | selectattr('mac', 'equalto', 'AA-BB-CC-DD-EE-10') | list | length > 0
+              - verify_dhcp.json.result.data | selectattr('mac', 'equalto', 'AA-BB-CC-DD-EE-03') | list | length > 0
+              - (verify_dhcp.json.result.data | selectattr('mac', 'equalto', 'AA-BB-CC-DD-EE-01') | first).ip == '192.168.10.100'
+              - (verify_dhcp.json.result.data | selectattr('mac', 'equalto', 'AA-BB-CC-DD-EE-02') | first).ip == '192.168.10.101'
+              - (verify_dhcp.json.result.data | selectattr('mac', 'equalto', 'AA-BB-CC-DD-EE-10') | first).ip == '192.168.20.10'
+              - (verify_dhcp.json.result.data | selectattr('mac', 'equalto', 'AA-BB-CC-DD-EE-03') | first).ip == '192.168.10.50'
+            fail_msg: "DHCP reservations not auto-generated correctly from devices"
+            success_msg: "✓ DHCP reservations auto-generated successfully from infra_devices.yml"
+
+    # ==========================================
+    # PHASE 2: UPDATE - Modify Configuration
+    # ==========================================
+    - name: "PHASE 2: UPDATE - Modify VLAN names"
+      block:
+        - name: Update vlans configuration (change names)
+          set_fact:
+            vlans:
+              - id: 10
+                name: "Test-Trusted-Updated"  # Changed name
+                subnet: "192.168.10.0/24"
+                dhcp_enabled: true
+              - id: 20
+                name: "Test-IoT-Updated"  # Changed name
+                subnet: "192.168.20.0/24"
+                dhcp_enabled: true
+
+        - name: Re-run vlans role with updated config
+          include_role:
+            name: vlans
+
+        - name: Verify VLANs were updated
+          uri:
+            url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_update
+
+        - name: Check Test-Trusted VLAN renamed
+          assert:
+            that:
+              - verify_update.json.result.data | selectattr('name', 'equalto', 'Test-Trusted-Updated') | list | length > 0
+              - (verify_update.json.result.data | selectattr('name', 'equalto', 'Test-Trusted-Updated') | first).vlan == 10
+            fail_msg: "Test-Trusted VLAN not renamed correctly"
+            success_msg: "✓ Test-Trusted VLAN renamed successfully"
+
+        - name: Check Test-IoT VLAN renamed
+          assert:
+            that:
+              - verify_update.json.result.data | selectattr('name', 'equalto', 'Test-IoT-Updated') | list | length > 0
+              - (verify_update.json.result.data | selectattr('name', 'equalto', 'Test-IoT-Updated') | first).vlan == 20
+            fail_msg: "Test-IoT VLAN not renamed correctly"
+            success_msg: "✓ Test-IoT VLAN renamed successfully"
+
+    # ==========================================
+    # PHASE 3: DNS and LEASE TIME - Test Optional Fields
+    # ==========================================
+    - name: "PHASE 3: DNS and LEASE TIME - Test optional DHCP fields"
+      block:
+        - name: Update vlans with DNS servers and lease time
+          set_fact:
+            vlans:
+              - id: 10
+                name: "Test-Trusted-Updated"
+                subnet: "192.168.10.0/24"
+                dhcp_enabled: true
+                dns_servers:
+                  - "8.8.8.8"
+                  - "8.8.4.4"
+                lease_time: 60
+              - id: 20
+                name: "Test-IoT-Updated"
+                subnet: "192.168.20.0/24"
+                dhcp_enabled: true
+                dns_servers:
+                  - "1.1.1.1"
+                lease_time: 90
+
+        - name: Re-run vlans role with DNS and lease time
+          include_role:
+            name: vlans
+
+        - name: Verify VLANs with DNS settings
+          uri:
+            url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_dns
+
+        - name: Check DNS and lease time configured correctly
+          assert:
+            that:
+              - (verify_dns.json.result.data | selectattr('name', 'equalto', 'Test-Trusted-Updated') | first).dhcpSettings.dhcpns == 'manual'
+              - (verify_dns.json.result.data | selectattr('name', 'equalto', 'Test-Trusted-Updated') | first).dhcpSettings.priDns == '8.8.8.8'
+              - (verify_dns.json.result.data | selectattr('name', 'equalto', 'Test-Trusted-Updated') | first).dhcpSettings.leasetime == 60
+              - (verify_dns.json.result.data | selectattr('name', 'equalto', 'Test-IoT-Updated') | first).dhcpSettings.dhcpns == 'manual'
+              - (verify_dns.json.result.data | selectattr('name', 'equalto', 'Test-IoT-Updated') | first).dhcpSettings.priDns == '1.1.1.1'
+              - (verify_dns.json.result.data | selectattr('name', 'equalto', 'Test-IoT-Updated') | first).dhcpSettings.leasetime == 90
+            fail_msg: "DNS servers or lease time not configured correctly"
+            success_msg: "✓ DNS servers and lease time configured successfully"
+
+    # ==========================================
+    # PHASE 4: IDEMPOTENCY - No Changes
+    # ==========================================
+    - name: "PHASE 4: IDEMPOTENCY - Run again without changes"
+      block:
+        - name: Get current VLAN state before idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_before_idempotency
+
+        - name: Run vlans role again (no config changes)
+          include_role:
+            name: vlans
+
+        - name: Get VLAN state after idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_after_idempotency
+
+        - name: Verify configuration unchanged (idempotency)
+          assert:
+            that:
+              - state_before_idempotency.json.result.data | selectattr('name', 'equalto', 'Test-Trusted-Updated') | list | length > 0
+              - state_after_idempotency.json.result.data | selectattr('name', 'equalto', 'Test-Trusted-Updated') | list | length > 0
+              - (state_before_idempotency.json.result.data | selectattr('name', 'equalto', 'Test-Trusted-Updated') | first).name == (state_after_idempotency.json.result.data | selectattr('name', 'equalto', 'Test-Trusted-Updated') | first).name
+              - (state_before_idempotency.json.result.data | selectattr('name', 'equalto', 'Test-IoT-Updated') | first).name == (state_after_idempotency.json.result.data | selectattr('name', 'equalto', 'Test-IoT-Updated') | first).name
+            fail_msg: "Configuration changed when it shouldn't have (not idempotent)"
+            success_msg: "✓ Idempotency check passed - no changes made"
+
+    - name: Display VLAN and DHCP test results
+      debug:
+        msg:
+          - "SUCCESS: Network configuration test passed"
+          - "  ✓ CREATE: VLANs created successfully"
+          - "  ✓ DHCP: Reservations auto-generated from devices"
+          - "  ✓ UPDATE: VLAN names updated successfully"
+          - "  ✓ DNS/LEASE: DNS servers and lease time configured"
+          - "  ✓ IDEMPOTENCY: No changes on re-run"

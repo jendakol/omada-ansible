@@ -1,0 +1,140 @@
+---
+# IP Address Groups
+#
+# Create groups of IP addresses for use in firewall rules.
+# Groups simplify firewall configuration and make rules more readable.
+
+ip_groups:
+  # Internal Servers - Using device references (RECOMMENDED)
+  - name: "Internal-Servers"
+    description: "Critical internal servers"
+    devices:
+      - server-01
+      - nas-storage
+      - home-assistant
+
+  # Cameras - Using device references (RECOMMENDED)
+  - name: "Security-Cameras"
+    description: "All IP cameras"
+    devices:
+      - camera-front
+      - camera-back
+      - camera-garage
+
+  # Public DNS - Using direct addresses (for external IPs)
+  - name: "Public-DNS"
+    description: "Public DNS servers"
+    addresses:
+      - "8.8.8.8/32"        # Google DNS primary
+      - "8.8.4.4/32"        # Google DNS secondary
+      - "1.1.1.1/32"        # Cloudflare DNS primary
+      - "1.0.0.1/32"        # Cloudflare DNS secondary
+
+  # Mixed Example - Both devices and addresses
+  - name: "Trusted-Management"
+    description: "Management devices and external admin IPs"
+    devices:
+      - server-01           # Internal server (from device registry)
+    addresses:
+      - "203.0.113.10/32"  # External admin IP
+
+# IP-Port Groups
+#
+# IP-Port groups combine IP addresses with specific port numbers for granular
+# firewall control. Use these when you need to restrict access to specific
+# services on specific ports.
+
+ip_port_groups:
+  # DNS Service - Pi-hole or internal DNS server
+  - name: "DNS-Service"
+    description: "Internal DNS server on port 53"
+    devices:
+      - server-01
+    ports:
+      - 53
+
+  # Web Services - HTTP/HTTPS services
+  - name: "Web-Services"
+    description: "Internal web servers (HTTP/HTTPS)"
+    devices:
+      - server-01
+      - home-assistant
+    ports:
+      - 80
+      - 443
+
+  # SSH Access - Restrict SSH to specific servers
+  - name: "SSH-Servers"
+    description: "Servers with SSH access"
+    devices:
+      - server-01
+      - nas-storage
+    ports:
+      - 22
+
+  # Example with direct addresses and multiple ports
+  - name: "Database-Servers"
+    description: "Database servers"
+    addresses:
+      - "192.168.10.50/32"
+      - "192.168.10.51/32"
+    ports:
+      - 3306  # MySQL
+      - 5432  # PostgreSQL
+
+# Field Descriptions for IP Groups:
+#
+# name: Group name (used in firewall rules)
+# description: Human-readable description
+# devices: List of device names (from infra_devices.yml) - RECOMMENDED
+#   - Device names are automatically resolved to their IP addresses
+#   - Maintains consistency with device registry
+#   - Makes configuration more readable and maintainable
+#   - Example: ["server-01", "nas-storage", "camera-front"]
+# addresses: List of IP addresses in CIDR notation - LEGACY or for external IPs
+#   - Direct IP addresses/ranges (e.g., "192.168.10.10/32", "8.8.8.8/32")
+#   - Use for external IPs or when device is not in device registry
+#   - Single IP: x.x.x.x/32
+#   - Subnet: x.x.x.0/24
+#   - Example: ["192.168.10.10/32", "8.8.8.8/32"]
+#
+# NOTE: You can use both 'devices' and 'addresses' in the same IP group.
+#       They will be combined. Use 'devices' for internal hosts (preferred)
+#       and 'addresses' for external IPs or subnets.
+
+# Field Descriptions for IP-Port Groups:
+#
+# name: Group name (used in firewall rules)
+# description: Human-readable description
+# devices: List of device names (from infra_devices.yml) - RECOMMENDED
+# addresses: List of IP addresses in CIDR notation - for external IPs
+# ports: List of port numbers (e.g., [53, 80, 443])
+#   - Port numbers can be integers or strings
+#   - Define the specific ports for the service
+#
+# NOTE: IP-Port groups are especially useful for:
+# - Allowing specific services only (e.g., DNS on port 53)
+# - Restricting access to web services (ports 80, 443)
+# - Controlling SSH/management access (port 22)
+# - More granular control than IP groups alone
+#
+# Benefits of using 'devices':
+# - Single source of truth: Change device IP in one place (infra_devices.yml)
+# - More readable: See device names instead of IP addresses
+# - Less error-prone: No risk of IP typos or mismatches
+# - Automatic updates: Groups update when device IPs change
+#
+# Usage Examples:
+# - Group servers for easier firewall rules
+# - Group cameras to restrict their internet access
+# - Group external services (DNS, NTP) to allow outbound access
+# - Group management IPs to restrict admin access
+# - Restrict access to specific ports/services
+#
+# Best Practices:
+# - Use 'devices' for internal hosts (preferred)
+# - Use 'addresses' for external IPs or when device not in registry
+# - Use descriptive names
+# - Group by function (servers, cameras, printers)
+# - Keep groups focused and specific
+# - Use IP-Port groups when you need port-specific control

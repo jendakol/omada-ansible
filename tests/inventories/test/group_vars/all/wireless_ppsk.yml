@@ -1,0 +1,54 @@
+---
+# Test PPSK Profiles
+#
+# PPSK (Private Pre-Shared Key) allows different passwords to assign devices to different VLANs
+
+ppsk_profiles:
+  # Test PPSK profile with VLAN names (recommended)
+  - name: "Test-PPSK-VLANs"
+    entries:
+      - name: "Test-VLAN10-ByName"
+        psk: "testvlan10pass"
+        vlan: "Test-Trusted"  # VLAN name from networks
+      - name: "Test-VLAN20-ByName"
+        psk: "testvlan20pass"
+        vlan: "Test-IoT"  # VLAN name from networks
+      - name: "Test-VLAN10-ById"
+        psk: "testvlan10by idpass"
+        vlan: "10"  # VLAN ID also supported
+      - name: "Test-VLAN30-NoVLAN"
+        psk: "testvlan30pass"
+        # No VLAN specified - uses default SSID VLAN
+
+# Field Descriptions:
+#
+# name: PPSK profile name
+# entries: List of PPSK entries
+#   - name: Entry name (descriptive, e.g., "Admin Devices", "Guest VLAN")
+#   - psk: Password for this entry (min 8 characters, WPA2 requirements)
+#   - vlan: VLAN ID to assign devices using this password (optional)
+#   - mac: MAC address restriction (optional, usually empty)
+#
+# How PPSK Works:
+# ===============
+# - Users connect to the same SSID
+# - Different passwords assign them to different VLANs
+# - Useful for:
+#   - Multi-tenant networks (different customers on different VLANs)
+#   - Device segmentation (IoT vs. trusted devices)
+#   - Temporary access (guest password on isolated VLAN)
+#
+# Security Considerations:
+# ========================
+# - Each password should be unique and strong
+# - PPSK doesn't support 6GHz band
+# - Passwords are visible to users who have them
+# - Consider using WPA3 for better security
+#
+# Usage in SSID Configuration:
+# =============================
+# In wireless_ssids.yml, reference the profile:
+#   ssids:
+#     - name: "MyNetwork"
+#       ppsk_profile: "Test-PPSK-VLANs"
+#       # password field not needed with PPSK

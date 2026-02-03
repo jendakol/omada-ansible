@@ -1,0 +1,36 @@
+---
+# Multicast/mDNS Forwarding
+#
+# Enable service discovery (AirPlay, Chromecast, Printers) across VLANs.
+# Without this, devices on different VLANs can't discover each other.
+
+multicast_forwarding:
+  enabled: true
+  # Service networks: Where the services/devices are located
+  service_networks: ["IoT", "Trusted"]
+  # Client networks: Where clients that need to discover services are located
+  client_networks: ["Trusted"]
+
+# Use Case Example:
+# - Chromecast on IoT VLAN (192.168.20.x)
+# - Phone on Trusted VLAN (192.168.10.x)
+# - Enable mDNS forwarding so phone can find Chromecast
+#
+# Configuration:
+# service_networks: ["IoT"]      # Chromecast is here
+# client_networks: ["Trusted"]   # Phone is here
+#
+# Common Services Using mDNS:
+# - Apple AirPlay/AirPrint
+# - Google Chromecast
+# - Sonos speakers
+# - Network printers
+# - Home Assistant
+# - Plex Media Server
+#
+# Notes:
+# - Only needed if devices are on different VLANs
+# - Service networks contain the devices you want to discover
+# - Client networks contain devices that need to discover services
+# - Bidirectional: clients can discover services and vice versa
+# - Disable if you don't need cross-VLAN discovery (better security)

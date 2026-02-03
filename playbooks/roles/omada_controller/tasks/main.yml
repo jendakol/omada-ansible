@@ -1,0 +1,179 @@
+---
+# Omada Controller API session and site discovery (Controller v5/v6)
+# Establishes authenticated session and discovers site information
+
+- name: Ensure controller connection variables are defined
+  assert:
+    that:
+      - (omada_controller_url | default('')) | length > 0
+      - (omada_site | default('')) | length > 0
+      - (omada_username | default('')) | length > 0
+      - (omada_password | default('')) | length > 0
+    fail_msg: >-
+      Missing required controller variables: url, site, username, or password.
+  tags: [omada, auth]
+
+- name: Set default API prefix
+  set_fact:
+    omada_api_prefix: "{{ omada_api_prefix | default('/api/v2') }}"
+  tags: [omada, auth]
+
+- name: Get controller info to obtain omadacId
+  uri:
+    url: "{{ omada_controller_url }}/api/info"
+    method: GET
+    headers:
+      Accept: application/json
+      Content-Type: "application/json; charset=UTF-8"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_info_resp
+  changed_when: false
+  failed_when: omada_info_resp.status != 200
+  tags: [omada, auth]
+
+- name: Extract omadacId from controller info
+  set_fact:
+    omada_c_id: "{{ omada_info_resp.json.result.omadacId }}"
+  tags: [omada, auth]
+
+- name: Debug controller info
+  debug:
+    msg:
+      - "Controller ID: {{ omada_c_id }}"
+      - "Controller version: {{ omada_info_resp.json.result.controllerVer | default('unknown') }}"
+  when: omada_api_debug | default(false)
+  tags: [omada, auth]
+
+- name: Login to Omada Controller (v2)
+  uri:
+    url: "{{ omada_controller_url }}/{{ omada_c_id }}/api/v2/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ omada_username }}"
+      password: "{{ omada_password }}"
+    headers:
+      Accept: application/json
+      Content-Type: "application/json; charset=UTF-8"
+      X-Requested-With: XMLHttpRequest
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 400, 401, 403]
+    return_content: true
+  register: omada_login_resp
+  changed_when: false
+  failed_when: false
+  tags: [omada, auth]
+
+- name: Check if login was successful
+  set_fact:
+    omada_login_success: "{{ omada_login_resp.status == 200 and (omada_login_resp.json.errorCode | default(1)) == 0 }}"
+  tags: [omada, auth]
+
+- name: Extract authentication tokens from login response
+  set_fact:
+    omada_session_id: "{{ omada_login_resp.cookies.TPOMADA_SESSIONID | default('') }}"
+    omada_auth_token: "{{ omada_login_resp.json.result.token | default('') }}"
+    omada_csrf_token: "{{ omada_login_resp.cookies.csrfToken | default('') }}"
+  when: omada_login_success | bool
+  tags: [omada, auth]
+
+- name: Fallback login (legacy API path) if v2 failed
+  uri:
+    url: "{{ omada_controller_url }}/api/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ omada_username }}"
+      password: "{{ omada_password }}"
+    headers:
+      Accept: application/json
+      Content-Type: "application/json; charset=UTF-8"
+      X-Requested-With: XMLHttpRequest
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 400, 401, 403]
+    return_content: true
+  register: omada_login_fallback_resp
+  changed_when: false
+  failed_when: false
+  when: not (omada_login_success | default(false))
+  tags: [omada, auth]
+
+- name: Extract tokens from fallback login
+  set_fact:
+    omada_session_id: "{{ omada_login_fallback_resp.cookies.TPOMADA_SESSIONID | default('') }}"
+    omada_auth_token: "{{ omada_login_fallback_resp.json.result.token | default('') }}"
+    omada_csrf_token: "{{ omada_login_fallback_resp.cookies.csrfToken | default('') }}"
+    omada_login_success: "{{ omada_login_fallback_resp.status == 200 and (omada_login_fallback_resp.json.errorCode | default(1)) == 0 }}"
+  when: omada_login_fallback_resp is defined and not (omada_login_success | default(false))
+  tags: [omada, auth]
+
+- name: Fail if authentication failed
+  fail:
+    msg: >-
+      Failed to authenticate with Omada Controller.
+      Status: {{ omada_login_resp.status | default('n/a') }},
+      Error: {{ omada_login_resp.json.msg | default('Unknown error') }}
+  when: not (omada_login_success | default(false))
+  tags: [omada, auth]
+
+- name: Build request headers for subsequent API calls
+  set_fact:
+    omada_headers:
+      Accept: application/json
+      Content-Type: "application/json; charset=UTF-8"
+      X-Requested-With: XMLHttpRequest
+      Csrf-Token: "{{ omada_auth_token }}"
+      Cookie: "TPOMADA_SESSIONID={{ omada_session_id }}"
+      omada-request-source: "web-local"
+  tags: [omada, auth]
+
+- name: Discover sites
+  uri:
+    url: "{{ omada_controller_url }}/{{ omada_c_id }}/api/v2/sites?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_sites_resp
+  changed_when: false
+  failed_when: omada_sites_resp.status != 200 or (omada_sites_resp.json.errorCode | default(1)) != 0
+  tags: [omada, auth]
+
+- name: Debug sites response
+  debug:
+    var: omada_sites_resp.json
+  tags: [omada, auth]
+
+- name: Extract sites data
+  set_fact:
+    omada_sites_data: "{{ omada_sites_resp.json.result.data | default([]) }}"
+  tags: [omada, auth]
+
+- name: Find site by name
+  set_fact:
+    omada_site_data: "{{ omada_sites_data | selectattr('name', 'equalto', omada_site) | first }}"
+  tags: [omada, auth]
+
+- name: Extract site ID
+  set_fact:
+    omada_site_id: "{{ omada_site_data.id }}"
+    omada_site_key: "{{ omada_site_data.key | default(omada_site_data.id) }}"
+  tags: [omada, auth]
+
+- name: Compose API base URL
+  set_fact:
+    omada_api_base: "{{ omada_controller_url }}/{{ omada_c_id }}/api/v2/sites/{{ omada_site_id }}"
+    omada_openapi_base: "{{ omada_controller_url }}/openapi/v1/{{ omada_c_id }}/sites/{{ omada_site_id }}"
+  tags: [omada, auth]
+
+- name: Display connection summary
+  debug:
+    msg:
+      - "Successfully connected to Omada Controller"
+      - "Site: {{ omada_site }} (ID: {{ omada_site_id }})"
+      - "API Base: {{ omada_api_base }}"
+      - "Session established with token authentication"
+  tags: [omada, auth]

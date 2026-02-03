@@ -1,0 +1,18 @@
+---
+# Test Network Configuration
+#
+# Minimal configuration using defaults:
+# - Gateway: auto-derived as .1 (e.g., 192.168.10.1)
+# - DHCP range: .1 - .254
+# - DNS: auto (uses controller's DNS settings)
+
+vlans:
+  - id: 10
+    name: "Test-Trusted"
+    subnet: "192.168.10.0/24"
+    dhcp_enabled: true
+
+  - id: 20
+    name: "Test-IoT"
+    subnet: "192.168.20.0/24"
+    dhcp_enabled: true

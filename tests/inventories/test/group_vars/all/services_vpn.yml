@@ -1,0 +1,4 @@
+---
+# Test WireGuard VPN (disabled for initial tests)
+
+wireguard_servers: []

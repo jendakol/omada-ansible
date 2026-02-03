@@ -1,0 +1,55 @@
+---
+# WireGuard VPN Configuration
+#
+# Enable secure remote access to your network via WireGuard VPN.
+# Note: This feature may not be available on all Omada controllers/gateways.
+
+wireguard:
+  enabled: false  # Set to true to enable VPN
+  listen_port: 51820
+  subnet: "10.8.0.0/24"
+  peers:
+    - name: "laptop"
+      public_key: "{{ vault_wireguard_peer_laptop_pubkey }}"
+      allowed_ips: "10.8.0.2/32"
+      keepalive: 25
+
+    - name: "phone"
+      public_key: "{{ vault_wireguard_peer_phone_pubkey }}"
+      allowed_ips: "10.8.0.3/32"
+      keepalive: 25
+
+# Field Descriptions:
+#
+# enabled: Whether VPN is active
+# listen_port: UDP port for WireGuard (default: 51820)
+# subnet: VPN subnet in CIDR notation
+#   - Should not overlap with existing networks
+#   - /24 = 254 possible clients
+# peers: List of VPN clients
+#   - name: Descriptive name for the client
+#   - public_key: Client's WireGuard public key
+#   - allowed_ips: IP address assigned to this client
+#   - keepalive: Seconds between keepalive packets (optional)
+#
+# Setup Steps:
+# 1. Generate WireGuard keys for each client
+#    wg genkey | tee privatekey | wg pubkey > publickey
+# 2. Store private keys on clients
+# 3. Store public keys in vault (vault_wireguard_peer_*_pubkey)
+# 4. Configure clients with:
+#    - Private key (from step 1)
+#    - Server public key (from controller)
+#    - Endpoint: your-public-ip:51820
+#    - Allowed IPs: 0.0.0.0/0 (route all traffic) or specific subnets
+#
+# Security Notes:
+# - Use Ansible Vault for public keys (prevents key exposure)
+# - Use strong keypairs (generated with wg genkey)
+# - Limit allowed_ips to specific IPs per client
+# - Enable firewall rules to restrict VPN client access
+# - Consider using separate VLAN for VPN clients
+#
+# Firewall Configuration:
+# - Port forward UDP 51820 to gateway (see nat_port_forward.yml)
+# - Create firewall rules for VPN subnet access

@@ -1,0 +1,52 @@
+---
+# Test Firewall Rules
+#
+# RULE ORDERING:
+# - Rules are ordered based on their position in this file
+# - First rule = index 1 (evaluated first)
+# - The playbook automatically reorders rules using modifyIndex API
+
+firewall_acl_rules:
+  - name: "Test-Allow-Rule"
+    acl_type: gateway
+    action: allow
+    enabled: true
+    protocols: [tcp]
+    source_type: network
+    source_vlans: [10]
+    destination_type: network
+    destination_vlans: [20]
+    direction:
+      lan_to_lan: true
+      lan_to_wan: false
+    bidirectional: false
+    enable_logging: false
+
+  # Test IP group-based rule (Switch ACL supports IP groups for LAN/LAN)
+  - name: "Test-IP-Group-Rule"
+    acl_type: switch
+    action: allow
+    enabled: true
+    protocols: [tcp]
+    source_type: ip_group
+    source_ip_groups: ["Test-Group-1"]
+    destination_type: ip_group
+    destination_ip_groups: ["Test-Group-2"]
+    enable_logging: false
+
+  # Test that IP groups and IP-Port groups work with combined mapping
+  # Gateway LAN/WAN with IP-Port group (Gateway only supports IP groups for LAN/WAN, not LAN/LAN)
+  - name: "Test-Gateway-LAN-WAN-IP-Port-Group"
+    acl_type: gateway
+    action: allow
+    enabled: true
+    protocols: [tcp]
+    source_type: network
+    source_vlans: [10]
+    destination_type: ip_group
+    destination_ip_groups: ["Test-IP-Port-Group"]  # IP-Port group with ports 53,80
+    direction:
+      lan_to_lan: false
+      lan_to_wan: true
+    bidirectional: false
+    enable_logging: false

@@ -1,0 +1,103 @@
+---
+# WiFi SSID Configuration
+#
+# Define wireless networks (SSIDs) for your access points.
+#
+# RECOMMENDED: Single SSID with MAC-based VLAN assignment
+# This allows all devices to connect to one SSID, with VLAN determined by device definition.
+
+wifi_ssids:
+  # ==========================================
+  # Option 1: Regular WiFi with Single Password
+  # ==========================================
+  # Use 'password' field for standard WiFi networks where everyone gets the same VLAN.
+
+  - name: "MyNetwork"
+    security: "wpa3_personal"  # Most secure for trusted devices
+    password: "your-trusted-password"  # Single password for this SSID
+    vlan: 10  # Trusted network - all devices go to this VLAN
+    enabled: true
+    broadcast_ssid: true
+    guest_network: false
+
+  - name: "MyNetwork-IoT"
+    security: "wpa2_personal"  # Compatible mode for IoT devices
+    password: "your-iot-password"  # Single password for this SSID
+    vlan: 20  # IoT network - all devices go to this VLAN
+    enabled: true
+    broadcast_ssid: true
+    guest_network: false
+
+  - name: "Guest"
+    security: "wpa2_personal"
+    password: "your-guest-password"  # Single password for this SSID
+    vlan: 30  # Guest network - all devices go to this VLAN
+    enabled: true
+    broadcast_ssid: true
+    guest_network: true  # Enable client isolation
+
+  # ==========================================
+  # Option 2: PPSK - Multiple Passwords, Different VLANs
+  # ==========================================
+  # Use 'ppsk_profile' instead of 'password' when you want different passwords
+  # to assign devices to different VLANs on the same SSID.
+
+  - name: "MyNetwork-PPSK"
+    ppsk_profile: "Home-PPSK"  # Reference PPSK profile from wireless_ppsk.yml
+    enabled: true
+    broadcast_ssid: true
+    guest_network: true
+    # DO NOT use 'password' field with ppsk_profile - they are mutually exclusive
+    # DO NOT use 'vlan' field - VLANs are assigned per password in the PPSK profile
+
+# ============================================
+# PPSK (Private Pre-Shared Key) SSIDs
+# ============================================
+#
+# PPSK allows one SSID with different passwords that assign devices to different VLANs.
+# Benefits:
+# - Users see one SSID (simpler than multiple SSIDs)
+# - Different passwords grant different network access
+# - Easier to manage than MAC-based VLAN assignment
+#
+# To use PPSK:
+# 1. Define PPSK profiles in wireless_ppsk.yml
+# 2. Reference the profile in the SSID using ppsk_profile field
+# 3. Do NOT specify password or vlan fields
+# 4. When using --tags wifi, PPSK profiles are automatically fetched if needed
+#
+# PPSK Limitations:
+# - Only supports 2.4GHz and 5GHz (no 6GHz)
+#
+# Tag Usage:
+# - You can use --tags wifi alone, even with PPSK SSIDs (profiles fetched automatically)
+# - Regular password SSIDs work independently of PPSK
+# - If PPSK is unavailable, those SSIDs are skipped but password-based SSIDs still work
+#
+# Field Descriptions:
+#
+# name: SSID name (what users see) - REQUIRED
+# security: Encryption type - REQUIRED
+#   - wpa3_personal: WPA3 (most secure, newer devices)
+#   - wpa2_personal: WPA2 (compatible, most devices)
+#   - wpa2_wpa3_personal: Mixed mode (both WPA2 and WPA3)
+#
+# Authentication - Choose ONE:
+#   password: Single WiFi password for standard WiFi (use with 'vlan' field)
+#   ppsk_profile: Reference to PPSK profile (do NOT use with 'password' or 'vlan')
+#
+# vlan: VLAN ID to assign all clients (must match infra_networks.yml)
+#       - ONLY use with 'password' (standard WiFi)
+#       - DO NOT use with 'ppsk_profile' (VLANs come from PPSK profile)
+#
+# enabled: Whether SSID is active (default: true)
+# broadcast_ssid: Whether to broadcast SSID name (default: true)
+# guest_network: Enable guest isolation - can't see other devices (default: false)
+
+# Security Recommendations:
+# - Use WPA3 for trusted networks if devices support it
+# - Use WPA2 for IoT (many IoT devices don't support WPA3)
+# - Use strong passwords (15+ characters)
+# - Use plain passwords (if private repo) or Ansible Vault for extra security
+# - Enable guest isolation for guest network
+# - Hide SSID for sensitive networks (set broadcast_ssid: false)

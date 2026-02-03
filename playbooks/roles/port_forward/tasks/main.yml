@@ -1,0 +1,204 @@
+---
+# Port forwarding/NAT configuration via Omada Controller API
+# Manages NAT port forwarding rules
+
+- name: Skip port forwarding when not defined
+  debug:
+    msg: "No port forwarding rules defined - skipping NAT configuration"
+  when: port_forward_rules | default([]) | length == 0
+  tags: [port_forward]
+
+- name: Build device name to IP mapping from device registry
+  set_fact:
+    _device_ip_map: >-
+      {{
+        dict(
+          devices | default([])
+          | selectattr('ip', 'defined')
+          | map(attribute='name')
+          | zip(
+            devices | default([])
+            | selectattr('ip', 'defined')
+            | map(attribute='ip')
+          )
+        )
+      }}
+  when: (port_forward_rules | default([]) | length > 0) and (devices | default([]) | length > 0)
+  tags: [port_forward]
+
+- name: Debug device IP mapping
+  debug:
+    msg: "Device name -> IP mapping: {{ _device_ip_map }}"
+  when: omada_api_debug | default(false) and (_device_ip_map is defined)
+  tags: [port_forward]
+
+- name: Fetch existing port forwarding rules
+  uri:
+    url: "{{ omada_api_base }}/setting/transmission/portForwardings?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_portfwd_resp
+  changed_when: false
+  failed_when: false
+  tags: [port_forward]
+
+- name: Check if port forwarding is supported
+  set_fact:
+    _portfwd_supported: "{{ omada_portfwd_resp.status == 200 and (omada_portfwd_resp.json.errorCode | default(1)) == 0 }}"
+  tags: [port_forward]
+
+- name: Warn if port forwarding not supported
+  debug:
+    msg: "WARNING: Port forwarding API endpoint not available or not supported on this controller/gateway setup. Skipping port forwarding configuration."
+  when: not _portfwd_supported
+  tags: [port_forward]
+
+- name: Build list of existing port forwarding rules
+  set_fact:
+    omada_portfwd_existing: "{{ omada_portfwd_resp.json.result.data | default(omada_portfwd_resp.json.data | default([])) }}"
+  when: _portfwd_supported
+  tags: [port_forward]
+
+- name: Debug existing port forwarding rules
+  debug:
+    msg: "Found {{ omada_portfwd_existing | length }} existing port forwarding rules"
+  when: _portfwd_supported and omada_api_debug | default(false)
+  tags: [port_forward]
+
+- name: Fetch WAN networks to get default WAN ID
+  uri:
+    url: "{{ omada_api_base }}/setting/wan/networks"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_wan_resp
+  changed_when: false
+  failed_when: false
+  when: _portfwd_supported and (port_forward_rules | default([]) | length > 0)
+  tags: [port_forward]
+
+- name: Debug WAN networks response
+  debug:
+    var: omada_wan_resp.json
+  when: _portfwd_supported and omada_api_debug | default(false)
+  tags: [port_forward]
+
+- name: Extract all active WAN port UUIDs (for "all active" default)
+  set_fact:
+    _all_wan_ids: "{{ omada_wan_resp.json.result.portUuids | default([]) }}"
+  when: _portfwd_supported and omada_wan_resp is defined and omada_wan_resp.status == 200
+  tags: [port_forward]
+
+- name: Extract first WAN port UUID (fallback for legacy)
+  set_fact:
+    _default_wan_id: "{{ _all_wan_ids[0] if (_all_wan_ids | length > 0) else '' }}"
+  when: _portfwd_supported and omada_wan_resp is defined and omada_wan_resp.status == 200
+  tags: [port_forward]
+
+- name: Build mapping of WAN port names to UUIDs for selection
+  set_fact:
+    _wan_port_map: >-
+      {{
+        dict(
+          omada_wan_resp.json.result.wanPortSettings | default([])
+          | map(attribute='portName')
+          | zip(
+            omada_wan_resp.json.result.wanPortSettings | default([])
+            | map(attribute='portUuid')
+          )
+        )
+      }}
+  when: _portfwd_supported and omada_wan_resp is defined and omada_wan_resp.status == 200
+  tags: [port_forward]
+
+- name: Debug default WAN IDs and available WANs
+  debug:
+    msg:
+      - "All active WAN IDs: {{ _all_wan_ids | default([]) }}"
+      - "Default WAN interface ID (first): {{ _default_wan_id | default('NOT SET') }}"
+      - "Available WAN ports: {{ _wan_port_map | default({}) }}"
+  when: _portfwd_supported and omada_api_debug | default(false)
+  tags: [port_forward]
+
+- name: Fail if no WAN interfaces detected
+  fail:
+    msg: "Could not automatically detect WAN interfaces. Please check WAN configuration or manually specify interface_wan_port_ids in your port forwarding rules."
+  when: _portfwd_supported and (port_forward_rules | default([]) | length > 0) and (_all_wan_ids is not defined or _all_wan_ids | length == 0)
+  tags: [port_forward]
+
+# ==========================================
+# CREATE/UPDATE PHASE - Run FIRST to ensure rules are in place
+# ==========================================
+
+- name: Ensure each port forwarding rule
+  include_tasks: ensure_port_forward.yml
+  loop: "{{ port_forward_rules }}"
+  loop_control:
+    loop_var: pf_item
+    label: "{{ pf_item.name }}"
+  when: _portfwd_supported
+  tags: [port_forward]
+
+# ==========================================
+# CLEANUP PHASE - Run LAST after all rules are in place (secure)
+# ==========================================
+
+- name: Find port forwarding rules to clean up (not in playbook config)
+  set_fact:
+    _portfwd_to_delete: >-
+      {{
+        omada_portfwd_existing
+        | rejectattr('name', 'in', port_forward_rules | default([]) | map(attribute='name') | list)
+        | list
+      }}
+  when: _portfwd_supported and omada_auto_cleanup | default(false)
+  tags: [port_forward, cleanup]
+
+- name: Warning about port forwarding rules to be deleted
+  debug:
+    msg:
+      - "WARNING: Auto-cleanup is enabled!"
+      - "The following port forwarding rules will be DELETED:"
+      - "{{ _portfwd_to_delete | map(attribute='name') | list | join(', ') }}"
+  when: _portfwd_supported and omada_auto_cleanup | default(false) and (_portfwd_to_delete | default([]) | length > 0)
+  tags: [port_forward, cleanup]
+
+- name: Delete port forwarding rules not defined in playbook (auto-cleanup)
+  uri:
+    url: "{{ omada_api_base }}/setting/transmission/portForwardings/{{ item.id }}"
+    method: DELETE
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  loop: "{{ _portfwd_to_delete | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _delete_portfwd_results
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _delete_portfwd_results is succeeded
+  when: _portfwd_supported and omada_auto_cleanup | default(false) and (_portfwd_to_delete | default([]) | length > 0)
+  changed_when: _delete_portfwd_results.status in [200, 204]
+  failed_when: _delete_portfwd_results.status not in [200, 204]
+  tags: [port_forward, cleanup]
+
+- name: Debug cleanup results
+  debug:
+    msg: "Deleted {{ _portfwd_to_delete | default([]) | length }} port forwarding rule(s)"
+  when: _portfwd_supported and omada_auto_cleanup | default(false)
+  tags: [port_forward, cleanup]
+
+- name: Summary of port forwarding configuration
+  debug:
+    msg:
+      - "Port Forwarding Configuration Complete"
+      - "  Configured: {{ port_forward_rules | length }} rule(s)"
+      - "  Deleted: {{ _portfwd_to_delete | default([]) | length }} rule(s)"
+  when: _portfwd_supported
+  tags: [port_forward]

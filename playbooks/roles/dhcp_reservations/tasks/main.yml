@@ -1,0 +1,277 @@
+---
+# DHCP Reservations management via Omada Controller API
+# Manages static DHCP leases for devices
+
+- name: Build device name to MAC mapping
+  set_fact:
+    _device_mac_map: "{{ dict(devices | map(attribute='name') | zip(devices | map(attribute='mac'))) }}"
+  when: devices | default([]) | length > 0
+  tags: [dhcp]
+
+- name: Initialize auto-generated reservations dict
+  set_fact:
+    _auto_dhcp_reservations: {}
+  tags: [dhcp]
+
+- name: Build auto-generated DHCP reservations from devices with IPs
+  set_fact:
+    _auto_dhcp_reservations: >-
+      {{
+        _auto_dhcp_reservations | combine({
+          item.network: (_auto_dhcp_reservations[item.network] | default([])) + [{
+            'device': item.name,
+            'ip': item.ip
+          }]
+        })
+      }}
+  loop: "{{ devices | default([]) | selectattr('ip', 'defined') | selectattr('network', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.network }})"
+  when: devices | default([]) | length > 0
+  tags: [dhcp]
+
+- name: Merge manual and auto-generated reservations (manual takes precedence)
+  set_fact:
+    _merged_dhcp_reservations: "{{ _auto_dhcp_reservations | combine(dhcp_reservations | default({}), recursive=true) }}"
+  tags: [dhcp]
+
+- name: Debug merged DHCP reservations
+  debug:
+    msg: "Total DHCP reservations for {{ _merged_dhcp_reservations.keys() | list | length }} network(s)"
+  when: _merged_dhcp_reservations | default({}) | length > 0
+  tags: [dhcp]
+
+- name: Skip DHCP reservations when nothing defined
+  debug:
+    msg: "No DHCP reservations or devices with IPs defined - skipping DHCP reservation configuration"
+  when: _merged_dhcp_reservations | default({}) | length == 0
+  tags: [dhcp]
+
+- name: Debug device MAC mapping
+  debug:
+    msg: "Device name -> MAC mapping: {{ _device_mac_map }}"
+  when: omada_api_debug | default(false) and (devices | default([]) | length > 0)
+  tags: [dhcp]
+
+- name: Fetch existing networks for network name resolution
+  uri:
+    url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_networks_for_dhcp
+  changed_when: false
+  when: _merged_dhcp_reservations | default({}) | length > 0
+  tags: [dhcp]
+
+- name: Build network name to network details mapping
+  set_fact:
+    _network_name_map: "{{ dict(omada_networks_for_dhcp.json.result.data | map(attribute='name') | zip(omada_networks_for_dhcp.json.result.data)) }}"
+  when: _merged_dhcp_reservations | default({}) | length > 0
+  tags: [dhcp]
+
+- name: Add alternate names for default networks (strip "(Default)" suffix)
+  set_fact:
+    _network_name_map: >-
+      {{
+        _network_name_map | combine(
+          dict(
+            omada_networks_for_dhcp.json.result.data
+            | selectattr('name', 'search', '\(Default\)$')
+            | map(attribute='name')
+            | map('regex_replace', '\(Default\)$', '')
+            | zip(
+              omada_networks_for_dhcp.json.result.data
+              | selectattr('name', 'search', '\(Default\)$')
+            )
+          )
+        )
+      }}
+  when: _merged_dhcp_reservations | default({}) | length > 0
+  tags: [dhcp]
+
+- name: Debug network name mapping
+  debug:
+    msg: "Network name -> Network mapping: {{ _network_name_map.keys() | list }}"
+  when: omada_api_debug | default(false) and (_merged_dhcp_reservations | default({}) | length > 0)
+  tags: [dhcp]
+
+- name: Fetch existing DHCP reservations
+  uri:
+    url: "{{ omada_api_base }}/setting/service/dhcp?currentPage=1&currentPageSize=1000"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_dhcp_resp
+  changed_when: false
+  when: _merged_dhcp_reservations | default({}) | length > 0
+  tags: [dhcp]
+
+- name: Build list of existing DHCP reservations
+  set_fact:
+    omada_dhcp_existing: "{{ omada_dhcp_resp.json.result.data | default([]) }}"
+  when: _merged_dhcp_reservations | default({}) | length > 0
+  tags: [dhcp]
+
+- name: Debug existing DHCP reservations
+  debug:
+    msg: "Found {{ omada_dhcp_existing | length }} existing DHCP reservation(s)"
+  when: _merged_dhcp_reservations | default({}) | length > 0
+  tags: [dhcp]
+
+# ==========================================
+# CLEANUP PHASE - Run BEFORE creating new entries to avoid IP conflicts
+# ==========================================
+
+- name: Build list of all configured reservation MACs for cleanup
+  set_fact:
+    _configured_macs: >-
+      {{
+        _merged_dhcp_reservations | default({})
+        | dict2items
+        | map(attribute='value')
+        | flatten
+        | map(attribute='device')
+        | map('extract', _device_mac_map)
+        | map('upper')
+        | map('regex_replace', ':', '-')
+        | list
+      }}
+  when: omada_auto_cleanup | default(false) and (_merged_dhcp_reservations | default({}) | length > 0)
+  tags: [dhcp, cleanup]
+
+- name: Build dict mapping MAC to expected IP for cleanup validation
+  set_fact:
+    _configured_mac_to_ip: >-
+      {{
+        dict(
+          _merged_dhcp_reservations | default({})
+          | dict2items
+          | map(attribute='value')
+          | flatten
+          | map(attribute='device')
+          | map('extract', _device_mac_map)
+          | map('upper')
+          | map('regex_replace', ':', '-')
+          | zip(
+            _merged_dhcp_reservations | default({})
+            | dict2items
+            | map(attribute='value')
+            | flatten
+            | map(attribute='ip')
+          )
+        )
+      }}
+  when: omada_auto_cleanup | default(false) and (_merged_dhcp_reservations | default({}) | length > 0)
+  tags: [dhcp, cleanup]
+
+- name: Find DHCP reservations to clean up (not in config OR MAC with wrong IP)
+  set_fact:
+    _dhcp_to_delete: []
+  when: omada_auto_cleanup | default(false) and (_merged_dhcp_reservations | default({}) | length > 0)
+  tags: [dhcp, cleanup]
+
+- name: Identify reservations to delete (MAC not in config OR wrong IP for MAC)
+  set_fact:
+    _dhcp_to_delete: "{{ _dhcp_to_delete + [item] }}"
+  loop: "{{ omada_dhcp_existing }}"
+  loop_control:
+    label: "{{ item.mac }} → {{ item.ip }}"
+  when: >-
+    (omada_auto_cleanup | default(false)) and
+    (_merged_dhcp_reservations | default({}) | length > 0) and
+    (
+      (item.mac not in _configured_macs) or
+      (_configured_mac_to_ip[item.mac] | default('') != item.ip)
+    )
+  tags: [dhcp, cleanup]
+
+- name: Warning about DHCP reservations to be deleted
+  debug:
+    msg:
+      - "WARNING: Auto-cleanup is enabled!"
+      - "The following DHCP reservations will be DELETED:"
+      - "{{ _dhcp_to_delete | map(attribute='mac') | list | join(', ') }}"
+  when: omada_auto_cleanup | default(false) and (_dhcp_to_delete | default([]) | length > 0)
+  tags: [dhcp, cleanup]
+
+- name: Delete DHCP reservations not defined in playbook (auto-cleanup)
+  uri:
+    url: "{{ omada_api_base }}/setting/service/dhcp/{{ item.mac }}"
+    method: DELETE
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  loop: "{{ _dhcp_to_delete | default([]) }}"
+  loop_control:
+    label: "{{ item.mac }} ({{ item.clientName | default('no-name') }})"
+  register: _delete_dhcp_results
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _delete_dhcp_results is succeeded
+  when: omada_auto_cleanup | default(false) and (_dhcp_to_delete | default([]) | length > 0)
+  changed_when: _delete_dhcp_results.status in [200, 204]
+  failed_when: _delete_dhcp_results.status not in [200, 204]
+  tags: [dhcp, cleanup]
+
+- name: Debug cleanup results
+  debug:
+    msg: "Deleted {{ _dhcp_to_delete | default([]) | length }} DHCP reservation(s)"
+  when: omada_auto_cleanup | default(false) and (_merged_dhcp_reservations | default({}) | length > 0)
+  tags: [dhcp, cleanup]
+
+# ==========================================
+# RE-FETCH AFTER CLEANUP - Get current state
+# ==========================================
+
+- name: Re-fetch existing DHCP reservations after cleanup
+  uri:
+    url: "{{ omada_api_base }}/setting/service/dhcp?currentPage=1&currentPageSize=1000"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_dhcp_resp_after_cleanup
+  changed_when: false
+  when: omada_auto_cleanup | default(false) and (_merged_dhcp_reservations | default({}) | length > 0)
+  tags: [dhcp]
+
+- name: Update list of existing DHCP reservations with post-cleanup state
+  set_fact:
+    omada_dhcp_existing: "{{ omada_dhcp_resp_after_cleanup.json.result.data | default([]) }}"
+  when: omada_auto_cleanup | default(false) and (_merged_dhcp_reservations | default({}) | length > 0)
+  tags: [dhcp]
+
+- name: Debug existing DHCP reservations after cleanup
+  debug:
+    msg: "Found {{ omada_dhcp_existing | length }} existing DHCP reservation(s) after cleanup"
+  when: omada_auto_cleanup | default(false) and (_merged_dhcp_reservations | default({}) | length > 0)
+  tags: [dhcp]
+
+# ==========================================
+# CREATE/UPDATE PHASE - Run AFTER cleanup with fresh state
+# ==========================================
+
+- name: Process DHCP reservations for each network
+  include_tasks: ensure_reservation.yml
+  loop: "{{ _merged_dhcp_reservations | dict2items }}"
+  loop_control:
+    loop_var: vlan_reservations
+    label: "Network: {{ vlan_reservations.key }}"
+  when: _merged_dhcp_reservations | default({}) | length > 0
+  tags: [dhcp]
+
+- name: Summary of DHCP reservations configuration
+  debug:
+    msg:
+      - "DHCP Reservations Configuration Complete"
+      - "  Deleted: {{ _dhcp_to_delete | default([]) | length }} reservation(s)"
+      - "  Configured: {{ _merged_dhcp_reservations | default({}) | length }} network(s)"
+  when: _merged_dhcp_reservations | default({}) | length > 0
+  tags: [dhcp]

@@ -1,0 +1,418 @@
+---
+# Ensure a single firewall ACL rule exists with correct configuration
+# Called per ACL rule item from main.yml
+# Supports Gateway ACLs (type 0), Switch ACLs (type 1), and EAP ACLs (type 2)
+
+- name: Find existing ACL rule by name
+  set_fact:
+    _existing_acl_rule: >-
+      {{
+        omada_acls_existing
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', acl_rule_item.name)
+        | list
+        | first
+        | default('')
+      }}
+  tags: [firewall]
+
+- name: Debug existing ACL rule match for {{ acl_rule_item.name }}
+  debug:
+    msg: "Existing ACL rule '{{ acl_rule_item.name }}': {{ 'Found' if _existing_acl_rule != '' else 'Not found' }}"
+  when: omada_api_debug | default(false)
+  tags: [firewall]
+
+# Validate source/destination type matches the specified IDs
+- name: Validate source_type matches source field usage
+  fail:
+    msg: |
+      ERROR: ACL rule '{{ acl_rule_item.name }}' has source_type='{{ acl_rule_item.source_type | default('network') }}'
+      but uses 'source_ip_groups'.
+
+      Fix: Change source_type to 'ip_group' when using source_ip_groups.
+  when:
+    - acl_rule_item.source_type | default('network') | lower == 'network'
+    - acl_rule_item.source_ip_groups is defined
+  tags: [firewall]
+
+- name: Validate destination_type matches destination field usage
+  fail:
+    msg: |
+      ERROR: ACL rule '{{ acl_rule_item.name }}' has destination_type='{{ acl_rule_item.destination_type | default('network') }}'
+      but uses 'destination_ip_groups'.
+
+      Fix: Change destination_type to 'ip_group' when using destination_ip_groups.
+  when:
+    - acl_rule_item.destination_type | default('network') | lower == 'network'
+    - acl_rule_item.destination_ip_groups is defined
+  tags: [firewall]
+
+# Determine ACL type (gateway=0, switch=1, eap=2)
+- name: Determine ACL type value
+  set_fact:
+    _acl_type_value: >-
+      {{
+        0 if (acl_rule_item.acl_type | default('gateway') | lower == 'gateway')
+        else (1 if (acl_rule_item.acl_type | default('gateway') | lower == 'switch')
+        else 2)
+      }}
+  tags: [firewall]
+
+# Determine source type
+- name: Determine source type value (for non-ip_group types)
+  set_fact:
+    _source_type_value: >-
+      {{
+        0 if (acl_rule_item.source_type | default('network') | lower == 'network')
+        else (2 if (acl_rule_item.source_type | default('network') | lower in ['mac', 'mac_address', 'mac-address'])
+        else (3 if (acl_rule_item.source_type | default('network') | lower in ['service', 'port'])
+        else (4 if (acl_rule_item.source_type | default('network') | lower == 'device')
+        else 0)))
+      }}
+  when: acl_rule_item.source_type is not defined or acl_rule_item.source_type | lower not in ['ip_group', 'ip-group', 'ipgroup']
+  tags: [firewall]
+
+# For ip_group source type, detect if it's an IP group (type=0) or IP-Port group (type=1)
+- name: Detect source group type (IP group vs IP-Port group)
+  set_fact:
+    _source_group_name: "{{ acl_rule_item.source_ip_groups | first }}"
+  when: acl_rule_item.source_type is defined and acl_rule_item.source_type | lower in ['ip_group', 'ip-group', 'ipgroup'] and acl_rule_item.source_ip_groups | default([]) | length > 0
+  tags: [firewall]
+
+- name: Set source type based on actual group type (1=IP group, 2=IP-Port group)
+  set_fact:
+    _source_type_value: >-
+      {{
+        1 if (_ip_group_type_map[_source_group_name] | default(0) | int == 0)
+        else 2
+      }}
+  when: acl_rule_item.source_type is defined and acl_rule_item.source_type | lower in ['ip_group', 'ip-group', 'ipgroup'] and _source_group_name is defined
+  tags: [firewall]
+
+# Determine destination type (0=network, 1=ip_group, 2=ip_port_group, 5=gateway_management, etc.)
+# For LAN-to-WAN rules, destination must be type 1 (IP Group) with IPGroup_Any
+- name: Check if this is a LAN-to-WAN rule
+  set_fact:
+    _is_lan_to_wan: "{{ (acl_rule_item.direction.lan_to_wan | default(false)) and not (acl_rule_item.direction.lan_to_lan | default(false)) }}"
+  tags: [firewall]
+
+- name: Determine destination type value (for non-ip_group types)
+  set_fact:
+    _destination_type_value: >-
+      {{
+        1 if (_is_lan_to_wan and acl_rule_item.destination_type is not defined)
+        else (0 if (acl_rule_item.destination_type is not defined or acl_rule_item.destination_type | lower == 'network')
+        else (2 if (acl_rule_item.destination_type | lower in ['mac', 'mac_address', 'mac-address'])
+        else (3 if (acl_rule_item.destination_type | lower in ['service', 'port'])
+        else (4 if (acl_rule_item.destination_type | lower == 'device')
+        else (5 if (acl_rule_item.destination_type | lower in ['gateway_management', 'gateway-management', 'management'])
+        else 0)))))
+      }}
+  when: acl_rule_item.destination_type is not defined or acl_rule_item.destination_type | lower not in ['ip_group', 'ip-group', 'ipgroup']
+  tags: [firewall]
+
+# For ip_group destination type, detect if it's an IP group (type=0) or IP-Port group (type=1)
+- name: Detect destination group type (IP group vs IP-Port group)
+  set_fact:
+    _destination_group_name: "{{ acl_rule_item.destination_ip_groups | first }}"
+  when: acl_rule_item.destination_type is defined and acl_rule_item.destination_type | lower in ['ip_group', 'ip-group', 'ipgroup'] and acl_rule_item.destination_ip_groups | default([]) | length > 0
+  tags: [firewall]
+
+- name: Set destination type based on actual group type (1=IP group, 2=IP-Port group)
+  set_fact:
+    _destination_type_value: >-
+      {{
+        1 if (_ip_group_type_map[_destination_group_name] | default(0) | int == 0)
+        else 2
+      }}
+  when: acl_rule_item.destination_type is defined and acl_rule_item.destination_type | lower in ['ip_group', 'ip-group', 'ipgroup'] and _destination_group_name is defined
+  tags: [firewall]
+
+# Validate Gateway LAN/LAN + IP groups
+- name: Check for invalid Gateway LAN/LAN with IP groups
+  fail:
+    msg: "ERROR: Gateway ACL '{{ acl_rule_item.name }}' uses IP groups with LAN-to-LAN direction. Gateway ACLs only support IP groups for LAN-to-WAN traffic. For LAN-to-LAN rules, use whole networks (source_vlans/destination_vlans) or use Switch/EAP ACL types instead."
+  when:
+    - _acl_type_value | int == 0  # Gateway ACL
+    - acl_rule_item.direction is defined
+    - acl_rule_item.direction.lan_to_lan | default(false)
+    - not (acl_rule_item.direction.lan_to_wan | default(false))
+    - (_source_type_value | int in [1, 2]) or (_destination_type_value | int in [1, 2])  # IP group or IP-Port group
+  tags: [firewall]
+
+# Resolve source IDs
+- name: Resolve source network IDs (for source_type=network)
+  set_fact:
+    _source_ids: >-
+      {{
+        acl_rule_item.source_networks | default([])
+        | map('extract', _network_map)
+        | select('defined')
+        | list
+        if (acl_rule_item.source_networks | default([]) | length > 0)
+        else (acl_rule_item.source_vlans | default([])
+          | map('string')
+          | map('extract', _vlan_to_network_map)
+          | select('defined')
+          | list)
+      }}
+  when: _source_type_value | int == 0
+  tags: [firewall]
+
+- name: Resolve source IP group names to IDs (for source_type=ip_group or ip_port_group)
+  set_fact:
+    _source_ids: >-
+      {{
+        acl_rule_item.source_ip_groups | default([])
+        | map('extract', _ip_group_map)
+        | select('defined')
+        | list
+      }}
+  when: _source_type_value | int in [1, 2] and acl_rule_item.source_ip_groups is defined and _ip_group_map is defined
+  tags: [firewall]
+
+- name: Use source IDs directly (for non-network types with explicit IDs)
+  set_fact:
+    _source_ids: "{{ acl_rule_item.source_ids | default([]) }}"
+  when: _source_type_value | int != 0 and acl_rule_item.source_ip_groups is not defined
+  tags: [firewall]
+
+# Resolve destination IDs
+- name: Resolve destination network IDs (for destination_type=network)
+  set_fact:
+    _destination_ids: >-
+      {{
+        acl_rule_item.destination_networks | default([])
+        | map('extract', _network_map)
+        | select('defined')
+        | list
+        if (acl_rule_item.destination_networks | default([]) | length > 0)
+        else (acl_rule_item.destination_vlans | default([])
+          | map('string')
+          | map('extract', _vlan_to_network_map)
+          | select('defined')
+          | list)
+      }}
+  when: _destination_type_value | int == 0 and acl_rule_item.destination_type is defined
+  tags: [firewall]
+
+- name: Resolve destination IP group names to IDs (for destination_type=ip_group or ip_port_group)
+  set_fact:
+    _destination_ids: >-
+      {{
+        acl_rule_item.destination_ip_groups | default([])
+        | map('extract', _ip_group_map)
+        | select('defined')
+        | list
+      }}
+  when: _destination_type_value | int in [1, 2] and acl_rule_item.destination_ip_groups is defined and _ip_group_map is defined
+  tags: [firewall]
+
+- name: Use destination IDs directly (for non-network types with explicit IDs)
+  set_fact:
+    _destination_ids: "{{ acl_rule_item.destination_ids | default([]) }}"
+  when: _destination_type_value | int != 0 and _destination_type_value | int != 5 and acl_rule_item.destination_ip_groups is not defined and acl_rule_item.destination_type is defined
+  tags: [firewall]
+
+- name: Use IPGroup_Any for LAN-to-WAN rules without explicit destination
+  set_fact:
+    _destination_ids: ["{{ _ipgroup_any_id }}"]
+  when: _is_lan_to_wan and acl_rule_item.destination_type is not defined and _ipgroup_any_id is defined and _ipgroup_any_id != ''
+  tags: [firewall]
+
+- name: Debug LAN-to-WAN destination resolution
+  debug:
+    msg: "LAN-to-WAN rule '{{ acl_rule_item.name }}': Using IPGroup_Any ({{ _ipgroup_any_id }}) as destination"
+  when: omada_api_debug | default(false) and _is_lan_to_wan and acl_rule_item.destination_type is not defined
+  tags: [firewall]
+
+- name: Use empty destination IDs for special types (gateway_management)
+  set_fact:
+    _destination_ids: []
+  when: _destination_type_value | int == 5 or (acl_rule_item.destination_type is not defined and not _is_lan_to_wan)
+  tags: [firewall]
+
+# Map protocol names to numbers (comprehensive list)
+- name: Map protocol names to numbers
+  set_fact:
+    _protocol_numbers: >-
+      {{
+        acl_rule_item.protocols | default(['all'])
+        | map('lower')
+        | map('replace', 'all', '256')
+        | map('replace', 'icmp', '1')
+        | map('replace', 'ggg', '3')
+        | map('replace', 'ip', '4')
+        | map('replace', 'ipencap', '4')
+        | map('replace', 'st', '5')
+        | map('replace', 'tcp', '6')
+        | map('replace', 'egp', '8')
+        | map('replace', 'igp', '9')
+        | map('replace', 'pup', '12')
+        | map('replace', 'udp', '17')
+        | map('replace', 'hmp', '20')
+        | map('replace', 'xns-idp', '22')
+        | map('replace', 'rdp', '27')
+        | map('replace', 'iso-tp4', '29')
+        | map('replace', 'dccp', '33')
+        | map('replace', 'xtp', '36')
+        | map('replace', 'ddp', '37')
+        | map('replace', 'idrp-cmtp', '38')
+        | map('replace', 'idrp', '45')
+        | map('replace', 'rsvp', '46')
+        | map('replace', 'gre', '47')
+        | map('replace', 'esp', '50')
+        | map('replace', 'ah', '51')
+        | map('replace', 'skip', '57')
+        | map('replace', 'icmpv6', '58')
+        | map('replace', 'vmtp', '81')
+        | map('replace', 'eigrp', '88')
+        | map('replace', 'ospf', '89')
+        | map('replace', 'ax.25', '93')
+        | map('replace', 'ipip', '94')
+        | map('replace', 'etherip', '97')
+        | map('replace', 'encap', '98')
+        | map('replace', 'pim', '103')
+        | map('replace', 'ipcomp', '108')
+        | map('replace', 'vrrp', '112')
+        | map('replace', 'l2tp', '115')
+        | map('replace', 'is-is', '124')
+        | map('replace', 'sctp', '132')
+        | map('replace', 'fc', '133')
+        | map('replace', 'mobility-header', '135')
+        | map('replace', 'udp-lite', '136')
+        | map('replace', 'mpls-in-ip', '137')
+        | map('replace', 'manet', '138')
+        | map('replace', 'hip', '139')
+        | map('replace', 'shim6', '140')
+        | map('replace', 'wesp', '141')
+        | map('replace', 'rohc', '142')
+        | map('int')
+        | list
+      }}
+  tags: [firewall]
+
+- name: Determine policy value (0 = deny, 1 = allow)
+  set_fact:
+    _policy_value: "{{ 0 if (acl_rule_item.action | default('deny') | lower in ['deny', 'drop', 'reject']) else 1 }}"
+  tags: [firewall]
+
+# Build direction configuration
+- name: Build direction configuration
+  set_fact:
+    _direction_config:
+      wanInIds: "{{ acl_rule_item.direction.wan_in_ids | default(acl_rule_item.direction.wan_in | default([])) }}"
+      vpnInIds: "{{ acl_rule_item.direction.vpn_in_ids | default(acl_rule_item.direction.vpn_in | default([])) }}"
+      lanToWan: "{{ acl_rule_item.direction.lan_to_wan | default(false) }}"
+      lanToLan: "{{ acl_rule_item.direction.lan_to_lan | default(true) }}"
+  when: acl_rule_item.direction is defined
+  tags: [firewall]
+
+- name: Build default direction configuration
+  set_fact:
+    _direction_config:
+      wanInIds: []
+      vpnInIds: []
+      lanToWan: false
+      lanToLan: true
+  when: acl_rule_item.direction is not defined
+  tags: [firewall]
+
+# Build base ACL rule configuration (common for all types)
+- name: Build base ACL rule configuration
+  set_fact:
+    _acl_config: >-
+      {{
+        {
+          'name': acl_rule_item.name,
+          'status': acl_rule_item.enabled | default(true),
+          'policy': _policy_value | int,
+          'protocols': _protocol_numbers,
+          'sourceType': _source_type_value | int,
+          'sourceIds': _source_ids | default([]),
+          'destinationType': _destination_type_value | int,
+          'destinationIds': _destination_ids | default([]),
+          'direction': _direction_config,
+          'type': _acl_type_value | int,
+          'ipSec': 0,
+          'stateMode': 0,
+          'customAclOsws': [],
+          'syslog': acl_rule_item.enable_logging | default(false),
+          'customAclStacks': []
+        }
+      }}
+  tags: [firewall]
+
+# Add Gateway-specific fields
+- name: Add Gateway-specific fields to ACL config
+  set_fact:
+    _acl_config: "{{ _acl_config | combine({'biDirectional': acl_rule_item.bidirectional | default(false)}) }}"
+  when: _acl_type_value | int == 0
+  tags: [firewall]
+
+# Add Switch-specific fields
+- name: Add Switch-specific fields to ACL config
+  set_fact:
+    _acl_config: >-
+      {{
+        _acl_config | combine({
+          'bindingType': acl_rule_item.binding_type | default(0),
+          'customAclPorts': acl_rule_item.custom_acl_ports | default([]),
+          'biDirectional': acl_rule_item.bidirectional | default(false),
+          'etherType': acl_rule_item.ether_type | default({'enable': false})
+        })
+      }}
+  when: _acl_type_value | int == 1
+  tags: [firewall]
+
+# Add EAP-specific fields (if any differences from gateway)
+- name: Add EAP-specific fields to ACL config
+  set_fact:
+    _acl_config: "{{ _acl_config | combine({'biDirectional': acl_rule_item.bidirectional | default(false)}) }}"
+  when: _acl_type_value | int == 2
+  tags: [firewall]
+
+- name: Debug ACL rule config to be sent
+  debug:
+    var: _acl_config
+  when: omada_api_debug | default(false)
+  tags: [firewall]
+
+- name: Create ACL rule {{ acl_rule_item.name }} if it doesn't exist
+  uri:
+    url: "{{ omada_api_base }}/setting/firewall/acls"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _acl_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 201]
+    return_content: true
+  register: _create_acl_result
+  when: _existing_acl_rule == '' or _existing_acl_rule is none
+  changed_when: _create_acl_result.status in [200, 201] and (_create_acl_result.json.errorCode | default(1)) == 0
+  failed_when: _create_acl_result.status not in [200, 201] or (_create_acl_result.json.errorCode | default(1)) != 0
+  tags: [firewall]
+
+- name: Update ACL rule {{ acl_rule_item.name }} if it exists
+  uri:
+    url: "{{ omada_api_base }}/setting/firewall/acls/{{ _existing_acl_rule.id }}"
+    method: PUT
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _acl_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  register: _update_acl_result
+  when: _existing_acl_rule != '' and _existing_acl_rule is not none
+  changed_when: _update_acl_result.status in [200, 204] and (_update_acl_result.json.errorCode | default(0)) == 0
+  failed_when: _update_acl_result.status not in [200, 204] or (_update_acl_result.json.errorCode | default(1)) != 0
+  tags: [firewall]
+
+- name: Debug ACL rule operation result
+  debug:
+    msg:
+      - "ACL rule '{{ acl_rule_item.name }}': {{ 'Created' if _create_acl_result is defined and _create_acl_result.changed else 'Updated' if _update_acl_result is defined and _update_acl_result.changed else 'No changes' }}"
+  when: omada_api_debug | default(false)
+  tags: [firewall]

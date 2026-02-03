@@ -1,0 +1,105 @@
+---
+# Ensure a single WireGuard server exists with correct configuration
+# Called per server item from main.yml
+
+- name: Find existing WireGuard server by name
+  set_fact:
+    _existing_wg_server: >-
+      {{
+        omada_wg_servers_existing
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', wg_server_item.name)
+        | list
+        | first
+        | default('')
+      }}
+  tags: [wireguard]
+
+- name: Debug existing WireGuard server match for {{ wg_server_item.name }}
+  debug:
+    msg: "Existing WireGuard server '{{ wg_server_item.name }}': {{ 'Found' if _existing_wg_server != '' else 'Not found' }}"
+  when: omada_api_debug | default(false)
+  tags: [wireguard]
+
+- name: Build WireGuard server configuration
+  set_fact:
+    _wg_server_config:
+      name: "{{ wg_server_item.name }}"
+      mtu: "{{ wg_server_item.mtu | default(1420) }}"
+      listenPort: "{{ wg_server_item.listen_port | default(51820) }}"
+      privateKey: "{{ wg_server_item.private_key }}"
+      localIp: "{{ wg_server_item.local_ip }}"
+      status: "{{ wg_server_item.enabled | default(true) }}"
+  tags: [wireguard]
+
+- name: Debug WireGuard server config to be sent
+  debug:
+    var: _wg_server_config
+  when: omada_api_debug | default(false)
+  tags: [wireguard]
+
+- name: Create WireGuard server {{ wg_server_item.name }} if it doesn't exist
+  uri:
+    url: "{{ omada_api_base }}/setting/wireguard"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _wg_server_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 201]
+    return_content: true
+  register: _create_wg_server_result
+  when: _existing_wg_server == '' or _existing_wg_server is none
+  changed_when: _create_wg_server_result.status in [200, 201] and (_create_wg_server_result.json.errorCode | default(1)) == 0
+  failed_when: _create_wg_server_result.status not in [200, 201] or (_create_wg_server_result.json.errorCode | default(1)) != 0
+  tags: [wireguard]
+
+- name: Update existing servers list after creation
+  set_fact:
+    omada_wg_servers_existing: "{{ omada_wg_servers_existing + [_create_wg_server_result.json.result | default(_create_wg_server_result.json.data)] }}"
+  when: _create_wg_server_result is defined and _create_wg_server_result.changed
+  tags: [wireguard]
+
+- name: Update WireGuard server {{ wg_server_item.name }} if it exists
+  uri:
+    url: "{{ omada_api_base }}/setting/wireguard/{{ _existing_wg_server.id }}"
+    method: PUT
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _wg_server_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  register: _update_wg_server_result
+  when: _existing_wg_server != '' and _existing_wg_server is not none
+  changed_when: _update_wg_server_result.status in [200, 204] and (_update_wg_server_result.json.errorCode | default(0)) == 0
+  failed_when: _update_wg_server_result.status not in [200, 204] or (_update_wg_server_result.json.errorCode | default(1)) != 0
+  tags: [wireguard]
+
+- name: Debug WireGuard server operation result
+  debug:
+    msg:
+      - "WireGuard server '{{ wg_server_item.name }}': {{ 'Created' if _create_wg_server_result is defined and _create_wg_server_result.changed else 'Updated' if _update_wg_server_result is defined and _update_wg_server_result.changed else 'No changes' }}"
+  when: omada_api_debug | default(false)
+  tags: [wireguard]
+
+- name: Get current server ID for peer management
+  set_fact:
+    _current_server_id: "{{ (_create_wg_server_result.json.result | default({})).id | default(_existing_wg_server.id) }}"
+  when: _create_wg_server_result is defined and _create_wg_server_result.changed
+  tags: [wireguard]
+
+- name: Use existing server ID for peer management
+  set_fact:
+    _current_server_id: "{{ _existing_wg_server.id }}"
+  when: _update_wg_server_result is defined or (_existing_wg_server != '' and _existing_wg_server is not none)
+  tags: [wireguard]
+
+- name: Configure WireGuard peers for server {{ wg_server_item.name }}
+  include_tasks: ensure_wg_peer.yml
+  loop: "{{ wg_server_item.peers | default([]) }}"
+  loop_control:
+    loop_var: wg_peer_item
+    label: "Peer: {{ wg_peer_item.name }}"
+  when: wg_server_item.peers is defined and (wg_server_item.peers | default([]) | length > 0)
+  tags: [wireguard]

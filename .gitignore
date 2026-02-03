@@ -1,0 +1,31 @@
+# IDEs
+.idea
+.vscode/
+
+# Production inventories (use separate private repo)
+inventories/production/
+inventories/*/group_vars/
+
+# Ansible
+*.retry
+.ansible/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Vault password files
+.vault_pass
+*.vault_pass
+vault_pass
+
+# Vault for testing
+tests/inventories/test/group_vars/all/vault.yml

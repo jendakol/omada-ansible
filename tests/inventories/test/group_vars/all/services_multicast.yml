@@ -1,0 +1,7 @@
+---
+# Test mDNS Forwarding
+
+multicast_forwarding:
+  enabled: true
+  service_networks: ["Test-IoT"]
+  client_networks: ["Test-Trusted"]

@@ -1,0 +1,262 @@
+---
+# Ensure a single VLAN/Network exists with correct configuration using OpenAPI v1
+# Called per VLAN item from main.yml
+
+- name: Find existing network by VLAN ID
+  set_fact:
+    _existing_network: >-
+      {{
+        omada_networks_existing
+        | selectattr('vlan', 'defined')
+        | selectattr('vlan', 'equalto', vlan_item.id)
+        | list
+        | first
+        | default(none)
+      }}
+  tags: [vlans]
+
+- name: Debug existing network match for VLAN {{ vlan_item.id }}
+  debug:
+    msg: "Existing network for VLAN {{ vlan_item.id }}: {{ _existing_network }}"
+  tags: [vlans]
+
+- name: Extract gateway IP from subnet (first usable IP)
+  set_fact:
+    _gateway_ip: "{{ vlan_item.subnet | regex_replace('^([0-9.]+)\\.[0-9]+/([0-9]+)$', '\\1.1') }}"
+    _subnet_cidr: "{{ vlan_item.subnet | regex_replace('^[0-9.]+/([0-9]+)$', '\\1') }}"
+  tags: [vlans]
+
+- name: Build gatewaySubnet in format "IP/CIDR"
+  set_fact:
+    _gateway_subnet: "{{ _gateway_ip }}/{{ _subnet_cidr }}"
+  tags: [vlans]
+
+- name: Determine DHCP range start (use dhcp_range_start or default to .1)
+  set_fact:
+    _dhcp_start: "{{ vlan_item.dhcp_range_start | default(vlan_item.subnet | regex_replace('^([0-9.]+)\\.[0-9]+/[0-9]+$', '\\1.1')) }}"
+  tags: [vlans]
+
+- name: Determine DHCP range end (use dhcp_range_end or default to .254)
+  set_fact:
+    _dhcp_end: "{{ vlan_item.dhcp_range_end | default(vlan_item.subnet | regex_replace('^([0-9.]+)\\.[0-9]+/[0-9]+$', '\\1.254')) }}"
+  tags: [vlans]
+
+- name: Build base DHCP settings
+  set_fact:
+    _dhcp_base:
+      enable: "{{ vlan_item.dhcp_enabled | default(true) }}"
+      ipRangePool:
+        - ipaddrStart: "{{ _dhcp_start }}"
+          ipaddrEnd: "{{ _dhcp_end }}"
+      leasetime: "{{ vlan_item.lease_time | default(120) }}"
+      gatewayMode: "auto"
+      options: []
+  tags: [vlans]
+
+- name: Add DNS settings if dns_servers is defined (manual mode)
+  set_fact:
+    _dhcp_settings: >-
+      {{
+        _dhcp_base | combine({
+          'dhcpns': 'manual',
+          'priDns': vlan_item.dns_servers[0],
+          'secDns': vlan_item.dns_servers[1] | default('')
+        })
+      }}
+  when: vlan_item.dns_servers is defined and (vlan_item.dns_servers | length > 0)
+  tags: [vlans]
+
+- name: Use auto DNS if dns_servers not defined
+  set_fact:
+    _dhcp_settings: "{{ _dhcp_base | combine({'dhcpns': 'auto'}) }}"
+  when: vlan_item.dns_servers is not defined or (vlan_item.dns_servers | length == 0)
+  tags: [vlans]
+
+- name: Build desired network configuration for VLAN {{ vlan_item.id }} (OpenAPI format)
+  set_fact:
+    _network_config:
+      name: "{{ vlan_item.name }}"
+      deviceType: 1
+      vlanType: 0
+      vlan: "{{ vlan_item.id }}"
+      gatewaySubnet: "{{ _gateway_subnet }}"
+      dhcpSettings: "{{ _dhcp_settings }}"
+      upnpLanEnable: false
+      igmpSnoopEnable: true
+      dhcpGuard:
+        enable: false
+      dhcpv6Guard:
+        enable: false
+      lanNetworkIpv6Config:
+        proto: 0
+        enable: 0
+        dhcpv6:
+          leasetime: 1440
+          dnsv6: 0
+        slaac:
+          preType: 0
+          preId: 0
+          dnsv6: 0
+        rdnss:
+          preType: 0
+          preId: 0
+          dnsv6: 0
+        passthrough: {}
+        ra:
+          preference: 1
+          validLifetime: 86400
+          preferredLifetime: 14400
+      qosQueueEnable: false
+      isolation: false
+      mldSnoopEnable: false
+      arpDetectionEnable: false
+      dhcpL2RelayEnable: false
+  tags: [vlans]
+
+- name: Debug network config to be sent
+  debug:
+    var: _network_config
+  when: omada_api_debug | default(false)
+  tags: [vlans]
+
+- name: Check network parameters (OpenAPI param-check)
+  uri:
+    url: "{{ omada_openapi_base }}/networks/param-check"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _network_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 400]
+    return_content: true
+  register: _param_check_result
+  when: _existing_network == '' or _existing_network is none
+  changed_when: false
+  failed_when: false
+  tags: [vlans]
+
+- name: Debug param check result
+  debug:
+    msg:
+      - "Param check status: {{ _param_check_result.status | default('skipped') }}"
+      - "Param check response: {{ _param_check_result.json | default('N/A') }}"
+  when: _param_check_result is defined
+  tags: [vlans]
+
+- name: Build full network creation payload for VLAN {{ vlan_item.id }}
+  set_fact:
+    _network_create_payload:
+      deviceConfig:
+        portIsolationEnable: false
+        flowControlEnable: false
+        deviceList: []
+        tagIds: []
+      lanNetwork: "{{ _network_config }}"
+  when: (_existing_network == '' or _existing_network is none) and (_param_check_result.status | default(200)) == 200
+  tags: [vlans]
+
+- name: Create network VLAN {{ vlan_item.id }} if it doesn't exist
+  uri:
+    url: "{{ omada_openapi_base }}/networks/confirm"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _network_create_payload }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 201]
+    return_content: true
+  register: _create_result
+  when: (_existing_network == '' or _existing_network is none) and (_param_check_result.status | default(200)) == 200
+  changed_when: _create_result.status in [200, 201] and (_create_result.json.errorCode | default(1)) == 0
+  failed_when: _create_result.status not in [200, 201] or (_create_result.json.errorCode | default(1)) != 0
+  tags: [vlans]
+
+- name: Check network parameters for update (OpenAPI param-check)
+  uri:
+    url: "{{ omada_openapi_base }}/networks/param-check"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _network_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 400]
+    return_content: true
+  register: _param_check_update_result
+  when: _existing_network != '' and _existing_network is not none
+  changed_when: false
+  failed_when: false
+  tags: [vlans]
+
+- name: Build base deviceConfig for update
+  set_fact:
+    _base_device_config:
+      portIsolationEnable: false
+      flowControlEnable: false
+      deviceList: []
+      internetPorts: "{{ _existing_network.interfaceIds | default([]) }}"
+      tagIds: []
+  when: _existing_network != '' and _existing_network is not none and (_param_check_update_result.status | default(200)) == 200
+  tags: [vlans]
+
+- name: Add gateway to deviceConfig if available
+  set_fact:
+    _base_device_config: "{{ _base_device_config | combine({'gateway': _existing_network.deviceMac}) }}"
+  when: >-
+    _existing_network != '' and _existing_network is not none and
+    (_param_check_update_result.status | default(200)) == 200 and
+    _existing_network.deviceMac is defined and _existing_network.deviceMac != ''
+  tags: [vlans]
+
+- name: Build base lanNetwork fields for update
+  set_fact:
+    _base_lan_network: "{{ _network_config | combine({'id': _existing_network.id, 'application': _existing_network.application | default(0), 'fastLeaveEnable': _existing_network.fastLeaveEnable | default(false), 'existMultiVlan': _existing_network.existMultiVlan | default(false), 'totalIpNum': _existing_network.totalIpNum | default(254), 'dhcpServerNum': _existing_network.dhcpServerNum | default(0), 'listIndex': _existing_network.listIndex | default(1)}) }}"
+  when: _existing_network != '' and _existing_network is not none and (_param_check_update_result.status | default(200)) == 200
+  tags: [vlans]
+
+- name: Add deviceMac to lanNetwork if gateway available
+  set_fact:
+    _base_lan_network: "{{ _base_lan_network | combine({'deviceMac': _existing_network.deviceMac}) }}"
+  when: >-
+    _existing_network != '' and _existing_network is not none and
+    (_param_check_update_result.status | default(200)) == 200 and
+    _existing_network.deviceMac is defined and _existing_network.deviceMac != ''
+  tags: [vlans]
+
+- name: Build network update payload for VLAN {{ vlan_item.id }}
+  set_fact:
+    _network_update_payload:
+      deviceConfig: "{{ _base_device_config }}"
+      lanNetwork: "{{ _base_lan_network }}"
+  when: _existing_network != '' and _existing_network is not none and (_param_check_update_result.status | default(200)) == 200
+  tags: [vlans]
+
+- name: Debug network update payload
+  debug:
+    msg:
+      - "Gateway MAC being used: {{ _existing_network.deviceMac | default('NONE - Site has no gateway hardware') }}"
+      - "Full update payload: {{ _network_update_payload }}"
+  when: _existing_network != '' and _existing_network is not none
+  tags: [vlans]
+
+- name: Update network VLAN {{ vlan_item.id }} if it exists
+  uri:
+    url: "{{ omada_openapi_base }}/networks/{{ _existing_network.id }}/confirm"
+    method: PUT
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _network_update_payload }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  register: _update_result
+  when: _existing_network != '' and _existing_network is not none and (_param_check_update_result.status | default(200)) == 200
+  changed_when: _update_result.status in [200, 204] and (_update_result.json.errorCode | default(0)) == 0
+  failed_when: _update_result.status not in [200, 204] or (_update_result.json.errorCode | default(1)) != 0
+  tags: [vlans]
+
+- name: Debug network operation result
+  debug:
+    msg:
+      - "VLAN {{ vlan_item.id }} ({{ vlan_item.name }}): {{ 'Created' if _create_result is defined and _create_result.changed else 'Updated' if _update_result is defined and _update_result.changed else 'No changes' }}"
+  when: omada_api_debug | default(false)
+  tags: [vlans]

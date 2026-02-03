@@ -1,0 +1,158 @@
+---
+# Ensure a single PPSK profile exists with correct configuration
+# Called per profile from main.yml
+
+- name: Find existing PPSK profile by name
+  set_fact:
+    _existing_ppsk: >-
+      {{
+        omada_ppsk_existing
+        | selectattr('profileName', 'defined')
+        | selectattr('profileName', 'equalto', ppsk_item.name)
+        | list
+        | first
+        | default('')
+      }}
+  tags: [ppsk]
+
+- name: Debug existing PPSK profile match for {{ ppsk_item.name }}
+  debug:
+    msg: "Existing PPSK profile '{{ ppsk_item.name }}': {{ 'Found' if _existing_ppsk != '' else 'Not found' }}"
+  when: omada_api_debug | default(false)
+  tags: [ppsk]
+
+- name: Fetch networks for VLAN name resolution
+  uri:
+    url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: _ppsk_networks_resp
+  changed_when: false
+  tags: [ppsk]
+
+- name: Build VLAN name to ID mapping
+  set_fact:
+    _vlan_name_to_id: >-
+      {{
+        dict(
+          (_ppsk_networks_resp.json.result.data | default(_ppsk_networks_resp.json.data | default([])))
+          | selectattr('name', 'defined')
+          | selectattr('vlan', 'defined')
+          | map(attribute='name')
+          | zip(
+            (_ppsk_networks_resp.json.result.data | default(_ppsk_networks_resp.json.data | default([])))
+            | selectattr('name', 'defined')
+            | selectattr('vlan', 'defined')
+            | map(attribute='vlan')
+          )
+        )
+      }}
+  tags: [ppsk]
+
+- name: Debug VLAN name to ID mapping
+  debug:
+    msg: "VLAN name → ID mapping: {{ _vlan_name_to_id }}"
+  when: omada_api_debug | default(false)
+  tags: [ppsk]
+
+- name: Initialize PPSK entries list
+  set_fact:
+    _ppsk_entries_final: []
+  tags: [ppsk]
+
+- name: Build PPSK entry with VLAN resolution (name or ID)
+  set_fact:
+    _ppsk_entries_final: >-
+      {{
+        _ppsk_entries_final +
+        [item | combine({
+          'mac': '',
+          'vlan': (
+            _vlan_name_to_id[item.vlan] | int
+            if (item.vlan is defined and item.vlan is string and item.vlan in _vlan_name_to_id)
+            else (item.vlan | int if item.vlan is defined else omit)
+          )
+        })]
+      }}
+  loop: "{{ ppsk_item.entries | default([]) }}"
+  tags: [ppsk]
+
+- name: Warn about unresolved VLAN names
+  debug:
+    msg: "WARNING: VLAN '{{ item.vlan }}' in PPSK entry '{{ item.name }}' not found in networks. Available VLANs: {{ _vlan_name_to_id.keys() | list | join(', ') }}"
+  loop: "{{ ppsk_item.entries | default([]) }}"
+  when: item.vlan is defined and item.vlan is string and item.vlan not in _vlan_name_to_id and (item.vlan | string | regex_search('^[0-9]+$')) is none
+  tags: [ppsk]
+
+- name: Build PPSK profile configuration for creation
+  set_fact:
+    _ppsk_config:
+      profileName: "{{ ppsk_item.name }}"
+      ppsk: "{{ _ppsk_entries_final }}"
+      type: 0
+  when: _existing_ppsk == '' or _existing_ppsk is none
+  tags: [ppsk]
+
+- name: Build PPSK profile configuration for update
+  set_fact:
+    _ppsk_config:
+      profileName: "{{ ppsk_item.name }}"
+      ppsk: "{{ _ppsk_entries_final }}"
+      type: 0
+      resource: 0
+  when: _existing_ppsk != '' and _existing_ppsk is not none
+  tags: [ppsk]
+
+- name: Debug PPSK config to be sent
+  debug:
+    var: _ppsk_config
+  when: omada_api_debug | default(false)
+  tags: [ppsk]
+
+- name: Create PPSK profile {{ ppsk_item.name }} if it doesn't exist
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/ppsk"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _ppsk_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 201]
+    return_content: true
+  register: _create_ppsk_result
+  when: _existing_ppsk == '' or _existing_ppsk is none
+  changed_when: _create_ppsk_result.status in [200, 201] and (_create_ppsk_result.json.errorCode | default(1)) == 0
+  failed_when: _create_ppsk_result.status not in [200, 201] or (_create_ppsk_result.json.errorCode | default(1)) != 0
+  tags: [ppsk]
+
+- name: Update PPSK profile name-to-ID mapping after creation
+  set_fact:
+    omada_ppsk_profile_map: "{{ omada_ppsk_profile_map | default({}) | combine({ppsk_item.name: _create_ppsk_result.json.result.id}) }}"
+  when: _create_ppsk_result is defined and _create_ppsk_result.changed
+  tags: [ppsk]
+
+- name: Update PPSK profile {{ ppsk_item.name }} if it exists
+  uri:
+    url: "{{ omada_api_base }}/setting/profiles/ppsk/{{ _existing_ppsk.id }}"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _ppsk_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  register: _update_ppsk_result
+  when: _existing_ppsk != '' and _existing_ppsk is not none
+  changed_when: _update_ppsk_result.status in [200, 204] and (_update_ppsk_result.json.errorCode | default(0)) == 0
+  failed_when: _update_ppsk_result.status not in [200, 204] or (_update_ppsk_result.json.errorCode | default(1)) != 0
+  tags: [ppsk]
+
+- name: Debug PPSK profile operation result
+  debug:
+    msg:
+      - "PPSK profile '{{ ppsk_item.name }}': {{ 'Created' if _create_ppsk_result is defined and _create_ppsk_result.changed else 'Updated' if _update_ppsk_result is defined and _update_ppsk_result.changed else 'No changes' }}"
+  when: omada_api_debug | default(false)
+  tags: [ppsk]

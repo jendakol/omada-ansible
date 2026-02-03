@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Device Registry",
+  "description": "Schema for device definitions used in DHCP reservations",
+  "type": "object",
+  "required": ["devices"],
+  "properties": {
+    "devices": {
+      "type": "array",
+      "description": "List of network devices",
+      "items": {
+        "type": "object",
+        "required": ["name", "mac", "description"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+            "description": "Device identifier (lowercase, hyphens, alphanumeric)"
+          },
+          "mac": {
+            "type": "string",
+            "pattern": "^([0-9a-f]{2}:){5}[0-9a-f]{2}$",
+            "description": "MAC address (lowercase with colons)"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable device description"
+          }
+        }
+      }
+    }
+  }
+}

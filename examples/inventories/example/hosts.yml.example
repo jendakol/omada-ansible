@@ -1,0 +1,18 @@
+---
+# Omada Controller Inventory
+#
+# This file defines where Ansible should run the playbooks.
+# For Omada controller management, we use 'local' connection since
+# all API calls are made from your machine to the controller.
+#
+# Usage:
+#   1. Copy this file to your config repo as hosts.yml (without .example)
+#   2. No changes needed unless you have special requirements
+
+all:
+  children:
+    controller:
+      hosts:
+        omada-controller:
+          ansible_host: localhost
+          ansible_connection: local

@@ -1,0 +1,116 @@
+---
+# Setup Test Site
+# Creates "Test-Automation" site on production controller for isolated testing
+
+- name: Setup Test Site
+  hosts: omada-controller
+  connection: local
+  gather_facts: false
+  vars:
+    omada_api_debug: false
+    test_site_name: "Test-Automation"
+
+  tasks:
+    - name: Authenticate to controller
+      block:
+        - name: Get controller info
+          uri:
+            url: "{{ omada_controller_url }}/api/info"
+            method: GET
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: controller_info
+
+        - name: Extract controller ID
+          set_fact:
+            omada_controller_id: "{{ controller_info.json.result.omadacId }}"
+
+        - name: Login to controller
+          uri:
+            url: "{{ omada_controller_url }}/{{ omada_controller_id }}/api/v2/login"
+            method: POST
+            body_format: json
+            body:
+              username: "{{ omada_username }}"
+              password: "{{ omada_password }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: login_response
+
+        - name: Extract authentication tokens
+          set_fact:
+            omada_session_id: "{{ login_response.cookies.TPOMADA_SESSIONID }}"
+            omada_auth_token: "{{ login_response.json.result.token }}"
+
+        - name: Build request headers
+          set_fact:
+            omada_headers:
+              Content-Type: "application/json"
+              Csrf-Token: "{{ omada_auth_token }}"
+              Cookie: "TPOMADA_SESSIONID={{ omada_session_id }}"
+
+    - name: Check if test site already exists
+      uri:
+        url: "{{ omada_controller_url }}/{{ omada_controller_id }}/api/v2/sites?currentPage=1&currentPageSize=50"
+        method: GET
+        headers: "{{ omada_headers }}"
+        validate_certs: "{{ verify_ssl | default(true) }}"
+        status_code: [200]
+        return_content: true
+      register: sites_response
+
+    - name: Find existing test site
+      set_fact:
+        existing_test_site: >-
+          {{
+            sites_response.json.result.data
+            | selectattr('name', 'equalto', test_site_name)
+            | list
+            | first
+            | default('')
+          }}
+
+    - name: Display site status
+      debug:
+        msg: "Test site '{{ test_site_name }}': {{ 'Already exists' if existing_test_site != '' else 'Will be created' }}"
+
+    - name: Create test site if it doesn't exist
+      uri:
+        url: "{{ omada_controller_url }}/{{ omada_controller_id }}/api/v2/sites"
+        method: POST
+        headers: "{{ omada_headers }}"
+        body_format: json
+        body:
+          name: "{{ test_site_name }}"
+          region: "Czechia"
+          timeZone: "Europe/Prague"
+          scenario: "Home"
+          deviceAccountSetting:
+            username: "device"
+            password: "pfmY5Z1Z!*8zOah@^m1"
+          tagIds: []
+          supportES: false
+          supportL2: true
+        validate_certs: "{{ verify_ssl | default(true) }}"
+        status_code: [200, 201]
+        return_content: true
+      register: create_site_result
+      when: existing_test_site == ''
+
+    - name: Get site ID from existing or created site
+      set_fact:
+        test_site_id: >-
+          {{
+            existing_test_site.id if existing_test_site != ''
+            else (create_site_result.json.result.siteId if (create_site_result is defined and create_site_result.json.errorCode | default(1) == 0) else '')
+          }}
+
+    - name: Display success message
+      debug:
+        msg:
+          - "✓ Test site ready!"
+          - "  Name: {{ test_site_name }}"
+          - "  ID: {{ test_site_id }}"
+          - "  Status: {{ 'Existing site reused' if existing_test_site != '' else 'New site created' }}"

@@ -1,0 +1,182 @@
+---
+# mDNS Forwarding configuration via Omada Controller API
+# Manages mDNS rules for service discovery across VLANs
+
+- name: Skip mDNS configuration when disabled or not defined
+  debug:
+    msg: "mDNS forwarding is disabled or not configured - skipping mDNS setup"
+  when: multicast_forwarding is not defined or not (multicast_forwarding.enabled | default(false))
+  tags: [multicast]
+
+- name: Fetch existing mDNS rules
+  uri:
+    url: "{{ omada_api_base }}/setting/service/mdns?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 404]
+    return_content: true
+  register: omada_mdns_resp
+  changed_when: false
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false))
+  tags: [multicast]
+
+- name: Check if mDNS is supported
+  set_fact:
+    _mdns_supported: "{{ omada_mdns_resp.status == 200 }}"
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false))
+  tags: [multicast]
+
+- name: Warn if mDNS not supported
+  debug:
+    msg: "WARNING: mDNS API endpoint not available - feature may not be supported on this controller version"
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and not _mdns_supported
+  tags: [multicast]
+
+- name: Build list of existing mDNS rules
+  set_fact:
+    omada_mdns_existing: "{{ omada_mdns_resp.json.result.data | default([]) }}"
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Debug existing mDNS rules
+  debug:
+    msg: "Found {{ omada_mdns_existing | length }} existing mDNS rule(s)"
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Fetch networks for VLAN name resolution
+  uri:
+    url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+    method: GET
+    headers: "{{ omada_headers }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200]
+    return_content: true
+  register: omada_networks_for_mdns
+  changed_when: false
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Build VLAN name to network ID mapping
+  set_fact:
+    _vlan_to_netid_map: "{{ dict(omada_networks_for_mdns.json.result.data | map(attribute='name') | zip(omada_networks_for_mdns.json.result.data | map(attribute='id'))) }}"
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Debug VLAN to network ID mapping
+  debug:
+    msg: "VLAN name -> Network ID mapping: {{ _vlan_to_netid_map }}"
+  when: omada_api_debug | default(false) and multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Resolve service network IDs from VLAN names
+  set_fact:
+    _service_network_ids: "{{ multicast_forwarding.service_networks | default([]) | map('extract', _vlan_to_netid_map) | list }}"
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Resolve client network IDs from VLAN names
+  set_fact:
+    _client_network_ids: "{{ multicast_forwarding.client_networks | default([]) | map('extract', _vlan_to_netid_map) | list }}"
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Find existing mDNS rule by name
+  set_fact:
+    _existing_mdns_rule: >-
+      {{
+        omada_mdns_existing
+        | selectattr('name', 'equalto', multicast_forwarding.rule_name | default('mDNS forward'))
+        | list
+        | first
+        | default('')
+      }}
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Debug existing mDNS rule match
+  debug:
+    msg: "mDNS rule '{{ multicast_forwarding.rule_name | default('mDNS forward') }}': {{ 'Found' if _existing_mdns_rule != '' else 'Not found' }}"
+  when: omada_api_debug | default(false) and multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Build mDNS rule configuration
+  set_fact:
+    _mdns_rule_config:
+      name: "{{ multicast_forwarding.rule_name | default('mDNS forward') }}"
+      status: true
+      type: 1
+      osg:
+        profileIds: "{{ multicast_forwarding.profile_ids | default(['buildIn-1', 'buildIn-2', 'buildIn-3', 'buildIn-4', 'buildIn-5', 'buildIn-6', 'buildIn-7', 'buildIn-8', 'buildIn-9', 'buildIn-10']) }}"
+        serviceNetworks: "{{ _service_network_ids }}"
+        clientNetworks: "{{ _client_network_ids }}"
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Debug mDNS rule config
+  debug:
+    var: _mdns_rule_config
+  when: omada_api_debug | default(false) and multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Create mDNS rule if it doesn't exist
+  uri:
+    url: "{{ omada_api_base }}/setting/service/mdns"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _mdns_rule_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 201]
+    return_content: true
+  register: _create_mdns_result
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported and (_existing_mdns_rule == '' or _existing_mdns_rule is none)
+  changed_when: _create_mdns_result.status in [200, 201] and (_create_mdns_result.json.errorCode | default(1)) == 0
+  failed_when: _create_mdns_result.status not in [200, 201] or (_create_mdns_result.json.errorCode | default(1)) != 0
+  tags: [multicast]
+
+- name: Update mDNS rule if it exists
+  uri:
+    url: "{{ omada_api_base }}/setting/service/mdns/{{ _existing_mdns_rule.id }}"
+    method: PUT
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _mdns_rule_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  register: _update_mdns_result
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported and _existing_mdns_rule != '' and _existing_mdns_rule is not none
+  changed_when: _update_mdns_result.status in [200, 204] and (_update_mdns_result.json.errorCode | default(0)) == 0
+  failed_when: _update_mdns_result.status not in [200, 204] or (_update_mdns_result.json.errorCode | default(1)) != 0
+  tags: [multicast]
+
+- name: Debug mDNS operation result
+  debug:
+    msg: "mDNS rule '{{ multicast_forwarding.rule_name | default('mDNS forward') }}': {{ 'Created' if _create_mdns_result is defined and _create_mdns_result.changed else 'Updated' if _update_mdns_result is defined and _update_mdns_result.changed else 'No changes' }}"
+  when: omada_api_debug | default(false) and multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Summary of mDNS configuration
+  debug:
+    msg:
+      - "mDNS forwarding configured:"
+      - "  Service networks: {{ multicast_forwarding.service_networks | default([]) | join(', ') }}"
+      - "  Client networks: {{ multicast_forwarding.client_networks | default([]) | join(', ') }}"
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
+  tags: [multicast]
+
+- name: Provide manual configuration guidance if not supported
+  debug:
+    msg:
+      - "mDNS forwarding is not available via API on this controller version."
+      - "To enable mDNS/Bonjour forwarding across VLANs, configure it manually:"
+      - "1. Log into the Omada Controller web interface"
+      - "2. Navigate to Settings > Services > mDNS"
+      - "3. Create a forwarding rule specifying:"
+      - "   - Service networks: where IoT devices are located"
+      - "   - Client networks: where clients (phones/laptops) are located"
+      - "4. Enable all built-in service profiles (AirPlay, Chromecast, etc.)"
+  when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and not _mdns_supported
+  tags: [multicast]

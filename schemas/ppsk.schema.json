@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PPSK Profiles Configuration",
+  "description": "Schema for PPSK (Private Pre-Shared Key) profiles for WiFi networks",
+  "type": "object",
+  "required": ["ppsk_profiles"],
+  "properties": {
+    "ppsk_profiles": {
+      "type": "array",
+      "description": "List of PPSK profiles",
+      "items": {
+        "type": "object",
+        "required": ["name", "entries"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "PPSK profile name (used when creating WiFi SSIDs)"
+          },
+          "entries": {
+            "type": "array",
+            "description": "List of PPSK entries (different passwords for different VLANs)",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["name", "psk"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Entry name (descriptive, e.g., 'Admin Devices', 'Guest VLAN')"
+                },
+                "psk": {
+                  "type": "string",
+                  "minLength": 8,
+                  "description": "Password for this entry (min 8 characters, WPA2 requirements)"
+                },
+                "vlan": {
+                  "oneOf": [
+                    {"type": "string", "pattern": "^[0-9]+$"},
+                    {"type": "integer", "minimum": 1, "maximum": 4094}
+                  ],
+                  "description": "VLAN ID to assign devices using this password (optional)"
+                },
+                "mac": {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$|^$",
+                  "description": "MAC address restriction (optional, usually empty)"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

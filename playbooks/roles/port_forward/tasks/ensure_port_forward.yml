@@ -1,0 +1,168 @@
+---
+# Ensure a single port forwarding rule exists with correct configuration
+# Called per rule from main.yml
+
+- name: Find existing port forwarding rule by name
+  set_fact:
+    _existing_pf: >-
+      {{
+        omada_portfwd_existing
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', pf_item.name)
+        | list
+        | first
+        | default('')
+      }}
+  tags: [port_forward]
+
+- name: Debug existing port forwarding rule match for {{ pf_item.name }}
+  debug:
+    msg: "Existing port forward '{{ pf_item.name }}': {{ 'Found' if _existing_pf != '' else 'Not found' }}"
+  when: omada_api_debug | default(false)
+  tags: [port_forward]
+
+- name: Resolve forward device to IP address
+  set_fact:
+    _resolved_forward_ip: >-
+      {{
+        pf_item.forward_ip
+        if pf_item.forward_ip is defined
+        else (_device_ip_map[pf_item.forward_device] if _device_ip_map is defined and pf_item.forward_device is defined else '')
+      }}
+  tags: [port_forward]
+
+- name: Validate that forward IP was resolved
+  fail:
+    msg: "Port forward rule '{{ pf_item.name }}': Could not resolve forward IP. Either provide 'forward_ip' or 'forward_device' (device must be defined in infra_devices.yml with 'ip' field)."
+  when: _resolved_forward_ip == ''
+  tags: [port_forward]
+
+- name: Debug resolved forward IP for {{ pf_item.name }}
+  debug:
+    msg: "Forward target: {{ pf_item.forward_device | default('direct IP') }} → {{ _resolved_forward_ip }}"
+  when: omada_api_debug | default(false)
+  tags: [port_forward]
+
+- name: Map protocol name to number
+  set_fact:
+    _protocol_number: >-
+      {{
+        1 if (pf_item.protocol | default('tcp') | lower) == 'tcp'
+        else 2 if (pf_item.protocol | default('tcp') | lower) == 'udp'
+        else 0 if (pf_item.protocol | default('tcp') | lower) in ['both', 'all']
+        else 1
+      }}
+  tags: [port_forward]
+
+- name: Initialize resolved WAN IDs list
+  set_fact:
+    _resolved_wan_ids: []
+  tags: [port_forward]
+
+- name: Resolve WAN interfaces by name (wan_interfaces array - RECOMMENDED)
+  set_fact:
+    _resolved_wan_ids: >-
+      {{
+        pf_item.wan_interfaces | map('extract', _wan_port_map) | list
+      }}
+  when: pf_item.wan_interfaces is defined and pf_item.wan_interfaces | length > 0
+  tags: [port_forward]
+
+- name: Resolve WAN interface by name (wan_interface singular - BACKWARD COMPATIBLE)
+  set_fact:
+    _resolved_wan_ids: >-
+      {{
+        [_wan_port_map[pf_item.wan_interface]] if pf_item.wan_interface in _wan_port_map else []
+      }}
+  when: pf_item.wan_interface is defined and (pf_item.wan_interfaces is not defined or pf_item.wan_interfaces | length == 0)
+  tags: [port_forward]
+
+- name: Validate WAN interface resolution (wan_interfaces)
+  fail:
+    msg: "Port forward rule '{{ pf_item.name }}': Some WAN interfaces not found in {{ pf_item.wan_interfaces }}. Available WAN ports: {{ _wan_port_map.keys() | list | join(', ') }}"
+  when: pf_item.wan_interfaces is defined and (_resolved_wan_ids | length) != (pf_item.wan_interfaces | length)
+  tags: [port_forward]
+
+- name: Validate WAN interface resolution (wan_interface singular)
+  fail:
+    msg: "Port forward rule '{{ pf_item.name }}': WAN interface '{{ pf_item.wan_interface }}' not found. Available WAN ports: {{ _wan_port_map.keys() | list | join(', ') }}"
+  when: pf_item.wan_interface is defined and (pf_item.wan_interfaces is not defined or pf_item.wan_interfaces | length == 0) and (_resolved_wan_ids | length == 0)
+  tags: [port_forward]
+
+- name: Determine WAN port IDs to use (wan_interfaces > wan_interface > interface_wan_port_ids > all active)
+  set_fact:
+    _wan_port_ids: >-
+      {{
+        _resolved_wan_ids if (_resolved_wan_ids | length > 0)
+        else (pf_item.interface_wan_port_ids if pf_item.interface_wan_port_ids is defined
+        else _all_wan_ids if (_all_wan_ids is defined and _all_wan_ids | length > 0) else [])
+      }}
+  tags: [port_forward]
+
+- name: Debug WAN resolution for {{ pf_item.name }}
+  debug:
+    msg:
+      - "WAN interfaces requested: {{ pf_item.wan_interfaces | default(pf_item.wan_interface | default('all active')) }}"
+      - "Resolved WAN IDs: {{ _wan_port_ids }}"
+  when: omada_api_debug | default(false)
+  tags: [port_forward]
+
+- name: Build port forwarding rule configuration for {{ pf_item.name }}
+  set_fact:
+    _pf_config:
+      name: "{{ pf_item.name }}"
+      externalPort: "{{ pf_item.external_port }}"
+      forwardIp: "{{ _resolved_forward_ip }}"
+      forwardPort: "{{ pf_item.forward_port }}"
+      protocol: "{{ _protocol_number | int }}"
+      status: "{{ pf_item.enabled | default(true) }}"
+      dMZ: "{{ pf_item.dmz | default(false) }}"
+      from: "{{ pf_item.from | default(0) }}"
+      interfaceWanPortId: "{{ _wan_port_ids }}"
+      virtualWanId: "{{ pf_item.virtual_wan_ids | default([]) }}"
+  tags: [port_forward]
+
+- name: Debug port forwarding config to be sent
+  debug:
+    var: _pf_config
+  when: omada_api_debug | default(false)
+  tags: [port_forward]
+
+- name: Create port forwarding rule {{ pf_item.name }} if it doesn't exist
+  uri:
+    url: "{{ omada_api_base }}/setting/transmission/portForwardings"
+    method: POST
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _pf_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 201]
+    return_content: true
+  register: _create_pf_result
+  when: _existing_pf == '' or _existing_pf is none
+  changed_when: _create_pf_result.status in [200, 201] and (_create_pf_result.json.errorCode | default(1)) == 0
+  failed_when: _create_pf_result.status not in [200, 201] or (_create_pf_result.json.errorCode | default(1)) != 0
+  tags: [port_forward]
+
+- name: Update port forwarding rule {{ pf_item.name }} if it exists
+  uri:
+    url: "{{ omada_api_base }}/setting/transmission/portForwardings/{{ _existing_pf.id }}"
+    method: PUT
+    headers: "{{ omada_headers }}"
+    body_format: json
+    body: "{{ _pf_config }}"
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    status_code: [200, 204]
+    return_content: true
+  register: _update_pf_result
+  when: _existing_pf != '' and _existing_pf is not none
+  changed_when: _update_pf_result.status in [200, 204] and (_update_pf_result.json.errorCode | default(0)) == 0
+  failed_when: _update_pf_result.status not in [200, 204] or (_update_pf_result.json.errorCode | default(1)) != 0
+  tags: [port_forward]
+
+- name: Debug port forwarding operation result
+  debug:
+    msg:
+      - "Port forward '{{ pf_item.name }}': {{ 'Created' if _create_pf_result is defined and _create_pf_result.changed else 'Updated' if _update_pf_result is defined and _update_pf_result.changed else 'No changes' }}"
+  when: omada_api_debug | default(false)
+  tags: [port_forward]

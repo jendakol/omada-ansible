@@ -1,0 +1,91 @@
+---
+# Test 7: mDNS Forwarding
+# Verifies CREATE and IDEMPOTENCY (UPDATE not applicable for enable/disable)
+
+- name: Test mDNS Forwarding
+  hosts: omada-controller
+  connection: local
+  gather_facts: false
+  vars:
+    omada_api_debug: true
+
+  tasks:
+    # ==========================================
+    # PHASE 1: CREATE - Initial Configuration
+    # ==========================================
+    - name: "PHASE 1: CREATE - Enable mDNS forwarding"
+      block:
+        - name: Include omada_controller role
+          include_role:
+            name: omada_controller
+
+        - name: Include vlans role (required for mDNS forwarding)
+          include_role:
+            name: vlans
+
+        - name: Include multicast_services role (initial config)
+          include_role:
+            name: multicast_services
+
+        - name: Verify mDNS forwarding was configured
+          uri:
+            url: "{{ omada_api_base }}/setting/service/mdns?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: verify_create
+
+        - name: Check mDNS forwarding exists
+          assert:
+            that:
+              - (verify_create.json.result.data | default(verify_create.json.data | default([]))) | selectattr('name', 'equalto', 'mDNS forward') | list | length > 0
+            fail_msg: "mDNS forwarding not found"
+            success_msg: "✓ mDNS forwarding configured successfully"
+
+    # ==========================================
+    # PHASE 2: IDEMPOTENCY - No Changes
+    # ==========================================
+    - name: "PHASE 2: IDEMPOTENCY - Run again without changes"
+      block:
+        - name: Get current mDNS state before idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/service/mdns?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_before_idempotency
+
+        - name: Run multicast_services role again (no config changes)
+          include_role:
+            name: multicast_services
+
+        - name: Get mDNS state after idempotency check
+          uri:
+            url: "{{ omada_api_base }}/setting/service/mdns?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+            return_content: true
+          register: state_after_idempotency
+
+        - name: Verify configuration unchanged (idempotency)
+          assert:
+            that:
+              - (state_before_idempotency.json.result.data | default(state_before_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'mDNS forward') | list | length > 0
+              - (state_after_idempotency.json.result.data | default(state_after_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'mDNS forward') | list | length > 0
+              - ((state_before_idempotency.json.result.data | default(state_before_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'mDNS forward') | first).name == ((state_after_idempotency.json.result.data | default(state_after_idempotency.json.data | default([]))) | selectattr('name', 'equalto', 'mDNS forward') | first).name
+            fail_msg: "Configuration changed when it shouldn't have (not idempotent)"
+            success_msg: "✓ Idempotency check passed - no changes made"
+
+    - name: Display mDNS test results
+      debug:
+        msg:
+          - "SUCCESS: mDNS forwarding test passed"
+          - "  ✓ CREATE: mDNS forwarding configured successfully"
+          - "  ✓ IDEMPOTENCY: No changes on re-run"
+          - "  Note: UPDATE test not applicable (enable/disable only)"

@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Firewall Configuration",
+  "description": "Schema for firewall ACL rules",
+  "type": "object",
+  "required": ["firewall_policies"],
+  "properties": {
+    "firewall_policies": {
+      "type": "array",
+      "description": "List of firewall rules",
+      "items": {
+        "type": "object",
+        "required": ["name", "enabled", "action", "protocol"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Rule name"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable rule"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["accept", "drop", "reject"],
+            "description": "Action to take"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": ["tcp", "udp", "icmp", "all"],
+            "description": "Protocol type"
+          },
+          "source_network": {
+            "type": "string",
+            "description": "Source network name"
+          },
+          "dest_network": {
+            "type": "string",
+            "description": "Destination network name"
+          },
+          "source_ip_group": {
+            "type": "string",
+            "description": "Source IP group name"
+          },
+          "dest_ip_group": {
+            "type": "string",
+            "description": "Destination IP group name"
+          },
+          "dest_port": {
+            "type": "string",
+            "description": "Destination port or range"
+          },
+          "description": {
+            "type": "string",
+            "description": "Rule description"
+          }
+        }
+      }
+    }
+  }
+}

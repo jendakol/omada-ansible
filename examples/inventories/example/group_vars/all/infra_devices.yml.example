@@ -1,0 +1,217 @@
+---
+# Device Registry
+#
+# Central definition of all known devices on your network.
+# Each device specifies MAC, VLAN, and optional static IP.
+# This is the SINGLE SOURCE OF TRUTH for device configuration.
+
+devices:
+  # ============================================
+  # Trusted Devices (Trusted network)
+  # ============================================
+
+  # WiFi device with static IP
+  - name: "laptop-work"
+    mac: "aa:bb:cc:dd:ee:01"
+    network: "Trusted"
+    ip: "192.168.10.50"
+    type: wifi
+    description: "Work laptop"
+
+  # Wired device with static IP
+  - name: "server-01"
+    mac: "aa:bb:cc:dd:ee:02"
+    network: "Trusted"
+    ip: "192.168.10.10"
+    type: wired
+    description: "Main application server"
+
+  # Wired device with static IP
+  - name: "nas-storage"
+    mac: "aa:bb:cc:dd:ee:03"
+    network: "Trusted"
+    ip: "192.168.10.11"
+    type: wired
+    description: "Network attached storage"
+
+  # ============================================
+  # IoT Devices (IoT network)
+  # ============================================
+
+  # WiFi camera with static IP
+  - name: "camera-front"
+    mac: "aa:bb:cc:dd:ee:10"
+    network: "IoT"
+    ip: "192.168.20.10"
+    type: wifi
+    description: "Front door camera"
+
+  # WiFi camera with static IP
+  - name: "camera-back"
+    mac: "aa:bb:cc:dd:ee:11"
+    network: "IoT"
+    ip: "192.168.20.11"
+    type: wifi
+    description: "Back door camera"
+
+  # Wired printer with dynamic IP
+  - name: "printer-office"
+    mac: "aa:bb:cc:dd:ee:12"
+    network: "IoT"
+    type: wired
+    # No IP = dynamic DHCP
+    description: "Office printer"
+
+  # WiFi device with dynamic IP
+  - name: "smart-thermostat"
+    mac: "aa:bb:cc:dd:ee:13"
+    network: "IoT"
+    type: wifi
+    description: "Smart thermostat"
+
+  # ============================================
+  # Guest Devices (Optional - default VLAN 30)
+  # ============================================
+  # Devices without VLAN go to default_vlan from WiFi SSID
+  # Usually you don't need to list guest devices
+
+  # - name: "guest-phone"
+  #   mac: "aa:bb:cc:dd:ee:20"
+  #   # No vlan = uses SSID default_vlan
+  #   description: "Guest phone"
+
+# ============================================
+# Field Descriptions
+# ============================================
+#
+# name: Unique device identifier
+#   - Used in port_forward, firewall rules, etc.
+#   - Example: forward_device: "server-01"
+#
+# mac: MAC address (lowercase with colons)
+#   - Used for DHCP reservations (both wired and WiFi)
+#   - Used for MAC-based VLAN assignment (WiFi only)
+#
+# network: Network name (from infra_networks.yml)
+#   - Examples: "Trusted", "IoT", "Guest"
+#   - References network name, not VLAN ID
+#   - If specified: Device assigned to this network
+#   - If omitted: WiFi devices use SSID's default network (usually "Guest")
+#
+# type: Device connection type (optional but recommended)
+#   - wifi: Device connects via WiFi (MAC-based VLAN assignment)
+#   - wired: Device connects via Ethernet (VLAN set on switch port)
+#   - Used for documentation and future features
+#
+# ip: Static IP address (optional)
+#   - If specified: DHCP reservation automatically created
+#   - If omitted: Device gets dynamic IP from DHCP pool
+#   - Must be in correct subnet for the network
+#
+# description: Human-readable description
+#
+# ============================================
+# How It Works
+# ============================================
+#
+# 1. WiFi Devices (type: wifi):
+#    a) Configure single SSID with mac_based_vlan: true
+#    b) WiFi role reads devices with type=wifi and network="XXX"
+#    c) Creates MAC-based VLAN rules: MAC → Network
+#    d) Device connects to SSID → Gets assigned to correct network
+#    e) Unknown WiFi devices → Assigned to default network (Guest)
+#
+# 2. Wired Devices (type: wired):
+#    a) Configure switch port VLAN manually (outside this playbook)
+#       - Example: Port 8 → VLAN 10 (Trusted)
+#    b) Device connects to switch port → Gets VLAN from port config
+#    c) DHCP reservation still created automatically via MAC
+#    d) Device gets correct IP on correct VLAN
+#
+# 3. DHCP Reservations (Both WiFi and Wired):
+#    - Automatically created for ALL devices with 'ip' field
+#    - Grouped by network name (not VLAN ID!)
+#    - Example: network: "Trusted" with ip: "192.168.10.10"
+#      → Creates reservation in Trusted network
+#    - Works for both WiFi and wired devices
+#
+# 4. Port Forwarding:
+#    - Reference by name: forward_device: "server-01"
+#    - IP automatically resolved from device definition
+#    - Works for both WiFi and wired devices
+#
+# ============================================
+# Examples
+# ============================================
+#
+# WiFi device with static IP on Trusted network:
+#   - name: "new-laptop"
+#     mac: "11:22:33:44:55:66"
+#     network: "Trusted"
+#     type: wifi
+#     ip: "192.168.10.55"
+#
+# Wired server with static IP on Trusted network:
+#   - name: "database-server"
+#     mac: "11:22:33:44:55:77"
+#     network: "Trusted"
+#     type: wired
+#     ip: "192.168.10.20"
+#     # Note: Configure switch port for VLAN 10 manually
+#
+# WiFi IoT device with dynamic IP:
+#   - name: "smart-bulb"
+#     mac: "11:22:33:44:55:88"
+#     network: "IoT"
+#     type: wifi
+#     # No IP = gets dynamic IP from IoT DHCP pool
+#
+# Wired IoT device with dynamic IP:
+#   - name: "security-panel"
+#     mac: "11:22:33:44:55:99"
+#     network: "IoT"
+#     type: wired
+#     # No IP = gets dynamic IP
+#     # Note: Configure switch port for VLAN 20 manually
+#
+# Guest WiFi device (unknown device, not in list):
+#   # Don't add to list - automatically goes to Guest network
+#
+# ============================================
+# Best Practices
+# ============================================
+#
+# - Define network for all trusted/IoT devices
+# - Set type (wifi/wired) for clarity
+# - Set static IP for servers, cameras, NAS, devices you port-forward to
+# - Guest WiFi devices can be omitted (auto DHCP on Guest network)
+# - Use descriptive names (used in firewall, port forward)
+# - Organize devices by network using comments
+#
+# ============================================
+# Wired Device Workflow
+# ============================================
+#
+# 1. Define device in this file:
+#    - name: "my-server"
+#      mac: "aa:bb:cc:dd:ee:ff"
+#      network: "Trusted"
+#      type: wired
+#      ip: "192.168.10.10"
+#
+# 2. Configure switch port (manually, outside playbook):
+#    - Connect device to switch port (e.g., port 8)
+#    - Set port 8 to VLAN 10 (Trusted network)
+#    - Can be done via Omada web UI or switch CLI
+#
+# 3. Result:
+#    - Device connects to switch port
+#    - Gets VLAN 10 from port configuration
+#    - DHCP gives it IP 192.168.10.10 (from reservation)
+#    - Port forwarding / firewall rules work via device name
+#
+# Why separate wired VLAN config?
+# - Switch port VLANs are physical port configuration
+# - Can't be automated via controller API
+# - Usually set once and rarely changed
+# - This playbook handles DHCP/firewall/port-forward automatically

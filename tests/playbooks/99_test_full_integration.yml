@@ -1,0 +1,133 @@
+---
+# Test 99: Full Integration Test
+# Runs all components together and verifies complete setup
+
+- name: Full Integration Test
+  hosts: omada-controller
+  connection: local
+  gather_facts: false
+  vars:
+    omada_api_debug: true
+
+  roles:
+    - role: omada_controller
+    - role: vlans
+    - role: dhcp_reservations
+    - role: wifi
+    - role: ip_groups
+    - role: firewall_policies
+    - role: multicast_services
+    - role: wireguard
+    - role: port_forward
+
+  tasks:
+    - name: Verify all components
+      debug:
+        msg: "Full integration test - all roles executed successfully"
+
+    - name: Run comprehensive verification
+      block:
+        # Verify VLANs
+        - name: Verify VLANs
+          uri:
+            url: "{{ omada_api_base }}/setting/lan/networks?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+          register: _verify_vlans
+
+        - name: Assert VLANs exist
+          assert:
+            that:
+              - _verify_vlans.json.result.data | selectattr('name', 'equalto', 'Test-Trusted') | list | length > 0
+              - _verify_vlans.json.result.data | selectattr('name', 'equalto', 'Test-IoT') | list | length > 0
+
+        # Verify DHCP Reservations
+        - name: Verify DHCP Reservations
+          uri:
+            url: "{{ omada_api_base }}/setting/service/dhcp?currentPage=1&currentPageSize=100"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+          register: _verify_dhcp
+
+        - name: Assert DHCP reservations exist
+          assert:
+            that:
+              - _verify_dhcp.json.result.data | selectattr('mac', 'equalto', 'AA-BB-CC-DD-EE-01') | list | length > 0
+              - _verify_dhcp.json.result.data | selectattr('mac', 'equalto', 'AA-BB-CC-DD-EE-02') | list | length > 0
+
+        # Verify IP Groups
+        - name: Verify IP Groups
+          uri:
+            url: "{{ omada_api_base }}/setting/profiles/groups/0?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+          register: _verify_ip_groups
+
+        - name: Assert IP groups exist
+          assert:
+            that:
+              - _verify_ip_groups.json.result.data | selectattr('name', 'equalto', 'Test-Group-1') | list | length > 0
+
+        # Verify Firewall Rules
+        - name: Verify Firewall Rules
+          uri:
+            url: "{{ omada_api_base }}/setting/firewall/acls?currentPage=1&currentPageSize=50&type=0"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+          register: _verify_firewall
+
+        - name: Assert firewall rules exist
+          assert:
+            that:
+              - _verify_firewall.json.result.data | selectattr('name', 'equalto', 'Test-Allow-Rule') | list | length > 0
+
+        # Verify mDNS Rules
+        - name: Verify mDNS Rules
+          uri:
+            url: "{{ omada_api_base }}/setting/service/mdns?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+          register: _verify_mdns
+
+        - name: Assert mDNS rules exist
+          assert:
+            that:
+              - _verify_mdns.json.result.data | selectattr('name', 'equalto', 'mDNS forward') | list | length > 0
+
+        # Verify Port Forwarding
+        - name: Verify Port Forwarding
+          uri:
+            url: "{{ omada_api_base }}/setting/transmission/portForwardings?currentPage=1&currentPageSize=50"
+            method: GET
+            headers: "{{ omada_headers }}"
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            status_code: [200]
+          register: _verify_port_forward
+
+        - name: Assert port forwarding rules exist
+          assert:
+            that:
+              - _verify_port_forward.json.result.data | selectattr('name', 'equalto', 'Test-Port-Forward') | list | length > 0
+
+        - name: Display success message
+          debug:
+            msg: "✓ SUCCESS: Full integration test passed - all components verified!"
+
+      rescue:
+        - name: Display failure message
+          debug:
+            msg: "✗ FAILED: Full integration test failed"
+
+        - name: Fail the test
+          fail:
+            msg: "Full integration test failed"

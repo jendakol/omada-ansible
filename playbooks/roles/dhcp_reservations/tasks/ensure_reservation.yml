@@ -1,0 +1,38 @@
+---
+# Ensure DHCP reservations for a single network
+# Called per network from main.yml
+
+- name: Fail if network {{ vlan_reservations.key }} doesn't exist on controller
+  fail:
+    msg: |
+      ERROR: Network '{{ vlan_reservations.key }}' not found on controller!
+
+      This usually means:
+      1. Typo in network name (check infra_devices.yml and infra_networks.yml)
+      2. Network name mismatch between config and controller
+      3. VLANs role hasn't created the network yet
+
+      Available networks: {{ _network_name_map.keys() | list | join(', ') }}
+
+      Fix: Ensure network names in infra_devices.yml match those in infra_networks.yml
+  when: vlan_reservations.key not in _network_name_map
+  tags: [dhcp]
+
+- name: Get network details for {{ vlan_reservations.key }}
+  set_fact:
+    _current_network: "{{ _network_name_map[vlan_reservations.key] }}"
+  tags: [dhcp]
+
+- name: Extract DHCP pool range for {{ vlan_reservations.key }}
+  set_fact:
+    _dhcp_pool_start: "{{ _current_network.dhcpSettings.ipRangeStart }}"
+    _dhcp_pool_end: "{{ _current_network.dhcpSettings.ipRangeEnd }}"
+  tags: [dhcp]
+
+- name: Process each reservation in {{ vlan_reservations.key }}
+  include_tasks: ensure_single_reservation.yml
+  loop: "{{ vlan_reservations.value }}"
+  loop_control:
+    loop_var: reservation_item
+    label: "{{ reservation_item.device }} → {{ reservation_item.ip }}"
+  tags: [dhcp]
