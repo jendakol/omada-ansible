@@ -121,7 +121,7 @@
   register: _delete_ppsk_results
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _delete_ppsk_results is succeeded
+  until: _delete_ppsk_results.status | default(-1) | int > 0
   when: _ppsk_supported and omada_auto_cleanup | default(false) and (_ppsk_to_delete | default([]) | length > 0)
   changed_when: _delete_ppsk_results.status in [200, 204]
   failed_when: _delete_ppsk_results.status not in [200, 204]

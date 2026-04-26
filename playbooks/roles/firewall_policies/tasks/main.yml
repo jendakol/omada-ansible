@@ -111,7 +111,7 @@
   changed_when: false
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: omada_networks_for_acl is succeeded
+  until: omada_networks_for_acl.status | default(-1) | int > 0
   when: _firewall_supported
   tags: [firewall]
 
@@ -262,7 +262,7 @@
   loop: [0, 1, 2]  # Gateway, Switch, EAP
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _acls_after_update is succeeded
+  until: _acls_after_update.status | default(-1) | int > 0
   when: _firewall_supported
   tags: [firewall]
 
@@ -373,7 +373,7 @@
   changed_when: true
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _reorder_gateway_result is succeeded
+  until: _reorder_gateway_result.status | default(-1) | int > 0
   tags: [firewall]
 
 - name: Reorder Switch ACL rules using modifyIndex API
@@ -393,7 +393,7 @@
   changed_when: true
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _reorder_switch_result is succeeded
+  until: _reorder_switch_result.status | default(-1) | int > 0
   tags: [firewall]
 
 - name: Reorder EAP ACL rules using modifyIndex API
@@ -413,7 +413,7 @@
   changed_when: true
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _reorder_eap_result is succeeded
+  until: _reorder_eap_result.status | default(-1) | int > 0
   tags: [firewall]
 
 # ==========================================
@@ -454,7 +454,7 @@
   register: _delete_acl_results
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _delete_acl_results is succeeded
+  until: _delete_acl_results.status | default(-1) | int > 0
   when: omada_auto_cleanup | default(false) and (_acls_to_delete | default([]) | length > 0)
   changed_when: _delete_acl_results.status in [200, 204]
   failed_when: _delete_acl_results.status not in [200, 204]

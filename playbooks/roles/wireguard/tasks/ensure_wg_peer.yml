@@ -15,7 +15,7 @@
   changed_when: false
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _wg_all_peers_resp is succeeded
+  until: _wg_all_peers_resp.status | default(-1) | int > 0
   tags: [wireguard]
 
 - name: Build list of existing peers
@@ -77,7 +77,7 @@
   failed_when: _create_wg_peer_result.status not in [200, 201] or (_create_wg_peer_result.json.errorCode | default(1)) != 0
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _create_wg_peer_result is succeeded
+  until: _create_wg_peer_result.status | default(-1) | int > 0
   tags: [wireguard]
 
 - name: Update WireGuard peer {{ wg_peer_item.name }} if it exists
@@ -96,7 +96,7 @@
   failed_when: _update_wg_peer_result.status not in [200, 204] or (_update_wg_peer_result.json.errorCode | default(1)) != 0
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _update_wg_peer_result is succeeded
+  until: _update_wg_peer_result.status | default(-1) | int > 0
   tags: [wireguard]
 
 - name: Debug WireGuard peer operation result
@@ -142,7 +142,7 @@
   register: _delete_wg_peer_results
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _delete_wg_peer_results is succeeded
+  until: _delete_wg_peer_results.status | default(-1) | int > 0
   when: omada_auto_cleanup | default(false)  and (_wg_peers_to_delete | default([]) | length > 0)
   changed_when: _delete_wg_peer_results.status in [200, 204]
   failed_when: _delete_wg_peer_results.status not in [200, 204]

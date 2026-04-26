@@ -270,7 +270,7 @@
   register: _create_ip_group_result
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _create_ip_group_result is succeeded
+  until: _create_ip_group_result.status | default(-1) | int > 0
   when: _existing_ip_group == '' or _existing_ip_group is none
   changed_when: _create_ip_group_result.status in [200, 201] and (_create_ip_group_result.json.errorCode | default(1)) == 0
   failed_when: _create_ip_group_result.status not in [200, 201] or (_create_ip_group_result.json.errorCode | default(1)) != 0
@@ -301,7 +301,7 @@
   register: _update_ip_group_result
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _update_ip_group_result is succeeded
+  until: _update_ip_group_result.status | default(-1) | int > 0
   when:
     - _existing_ip_group != '' and _existing_ip_group is not none
     - _ip_group_type | int == 0
@@ -326,7 +326,7 @@
   failed_when: _update_ip_group_result.status not in [200, 204] or (_update_ip_group_result.json.errorCode | default(1)) != 0
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _update_ip_group_result is succeeded
+  until: _update_ip_group_result.status | default(-1) | int > 0
   tags: [ip_groups]
 
 - name: Debug IP group operation result

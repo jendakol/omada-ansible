@@ -21,7 +21,7 @@
   failed_when: omada_wlans_resp.status != 200 or (omada_wlans_resp.json.errorCode | default(1)) != 0
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: omada_wlans_resp is succeeded
+  until: omada_wlans_resp.status | default(-1) | int > 0
   when: wifi_ssids is defined and (wifi_ssids | length > 0)
   tags: [wifi]
 
@@ -61,7 +61,7 @@
   changed_when: false
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: omada_ssids_resp is succeeded
+  until: omada_ssids_resp.status | default(-1) | int > 0
   when: wifi_ssids is defined and (wifi_ssids | length > 0) and _wlan_profile_id != ''
   tags: [wifi]
 
@@ -183,7 +183,7 @@
   register: _delete_ssid_results
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _delete_ssid_results is succeeded
+  until: _delete_ssid_results.status | default(-1) | int > 0
   when: wifi_ssids is defined and omada_auto_cleanup | default(false) and (_ssids_to_delete | default([]) | length > 0)
   changed_when: _delete_ssid_results.status in [200, 204]
   failed_when: _delete_ssid_results.status not in [200, 204]
