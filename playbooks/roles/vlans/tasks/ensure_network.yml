@@ -171,7 +171,7 @@
   register: _create_result
   when: (_existing_network == '' or _existing_network is none) and (_param_check_result.status | default(200)) == 200
   changed_when: _create_result.status in [200, 201] and (_create_result.json.errorCode | default(1)) == 0
-  failed_when: _create_result.status not in [200, 201] or (_create_result.json.errorCode | default(1)) != 0
+  failed_when: (_create_result.status | default(-1) | int) > 0 and (_create_result.status not in [200, 201] or (_create_result.json.errorCode | default(1)) != 0)
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
   until: _create_result.status | default(-1) | int > 0
@@ -260,7 +260,7 @@
   register: _update_result
   when: _existing_network != '' and _existing_network is not none and (_param_check_update_result.status | default(200)) == 200
   changed_when: _update_result.status in [200, 204] and (_update_result.json.errorCode | default(0)) == 0
-  failed_when: _update_result.status not in [200, 204] or (_update_result.json.errorCode | default(1)) != 0
+  failed_when: (_update_result.status | default(-1) | int) > 0 and (_update_result.status not in [200, 204] or (_update_result.json.errorCode | default(1)) != 0)
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
   until: _update_result.status | default(-1) | int > 0
