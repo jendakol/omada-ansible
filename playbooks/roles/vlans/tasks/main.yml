@@ -19,6 +19,9 @@
   register: omada_networks_resp
   changed_when: false
   failed_when: omada_networks_resp.status != 200 or (omada_networks_resp.json.errorCode | default(1)) != 0
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_networks_resp is succeeded
   tags: [vlans]
 
 - name: Build map of existing networks

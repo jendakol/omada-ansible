@@ -19,6 +19,9 @@
   register: omada_wlans_resp
   changed_when: false
   failed_when: omada_wlans_resp.status != 200 or (omada_wlans_resp.json.errorCode | default(1)) != 0
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_wlans_resp is succeeded
   when: wifi_ssids is defined and (wifi_ssids | length > 0)
   tags: [wifi]
 
@@ -56,6 +59,9 @@
     return_content: true
   register: omada_ssids_resp
   changed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_ssids_resp is succeeded
   when: wifi_ssids is defined and (wifi_ssids | length > 0) and _wlan_profile_id != ''
   tags: [wifi]
 
@@ -86,6 +92,9 @@
   register: omada_ppsk_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_ppsk_resp.status | default(-1) | int > 0
   when: wifi_ssids is defined and _wifi_needs_ppsk | default(false)
   tags: [wifi]
 

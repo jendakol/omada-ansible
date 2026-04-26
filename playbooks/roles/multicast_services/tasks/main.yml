@@ -18,6 +18,9 @@
     return_content: true
   register: omada_mdns_resp
   changed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_mdns_resp is succeeded
   when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false))
   tags: [multicast]
 
@@ -55,6 +58,9 @@
     return_content: true
   register: omada_networks_for_mdns
   changed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_networks_for_mdns is succeeded
   when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported
   tags: [multicast]
 
@@ -134,6 +140,9 @@
   when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported and (_existing_mdns_rule == '' or _existing_mdns_rule is none)
   changed_when: _create_mdns_result.status in [200, 201] and (_create_mdns_result.json.errorCode | default(1)) == 0
   failed_when: _create_mdns_result.status not in [200, 201] or (_create_mdns_result.json.errorCode | default(1)) != 0
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _create_mdns_result is succeeded
   tags: [multicast]
 
 - name: Update mDNS rule if it exists
@@ -150,6 +159,9 @@
   when: multicast_forwarding is defined and (multicast_forwarding.enabled | default(false)) and _mdns_supported and _existing_mdns_rule != '' and _existing_mdns_rule is not none
   changed_when: _update_mdns_result.status in [200, 204] and (_update_mdns_result.json.errorCode | default(0)) == 0
   failed_when: _update_mdns_result.status not in [200, 204] or (_update_mdns_result.json.errorCode | default(1)) != 0
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _update_mdns_result is succeeded
   tags: [multicast]
 
 - name: Debug mDNS operation result

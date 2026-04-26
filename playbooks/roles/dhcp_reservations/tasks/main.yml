@@ -63,6 +63,9 @@
     return_content: true
   register: omada_networks_for_dhcp
   changed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_networks_for_dhcp is succeeded
   when: _merged_dhcp_reservations | default({}) | length > 0
   tags: [dhcp]
 
@@ -108,6 +111,9 @@
     return_content: true
   register: omada_dhcp_resp
   changed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_dhcp_resp is succeeded
   when: _merged_dhcp_reservations | default({}) | length > 0
   tags: [dhcp]
 
@@ -239,6 +245,9 @@
     return_content: true
   register: omada_dhcp_resp_after_cleanup
   changed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_dhcp_resp_after_cleanup is succeeded
   when: omada_auto_cleanup | default(false) and (_merged_dhcp_reservations | default({}) | length > 0)
   tags: [dhcp]
 

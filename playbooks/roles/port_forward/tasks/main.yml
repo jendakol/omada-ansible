@@ -43,6 +43,9 @@
   register: omada_portfwd_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_portfwd_resp.status | default(-1) | int > 0
   tags: [port_forward]
 
 - name: Check if port forwarding is supported
@@ -79,6 +82,9 @@
   register: omada_wan_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_wan_resp.status | default(-1) | int > 0
   when: _portfwd_supported and (port_forward_rules | default([]) | length > 0)
   tags: [port_forward]
 

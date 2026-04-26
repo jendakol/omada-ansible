@@ -31,6 +31,9 @@
   register: omada_info_resp
   changed_when: false
   failed_when: omada_info_resp.status != 200
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_info_resp is succeeded
   tags: [omada, auth]
 
 - name: Extract omadacId from controller info
@@ -64,6 +67,9 @@
   register: omada_login_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_login_resp.status | default(-1) | int > 0
   tags: [omada, auth]
 
 - name: Check if login was successful
@@ -97,6 +103,9 @@
   register: omada_login_fallback_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_login_fallback_resp.status | default(-1) | int > 0
   when: not (omada_login_success | default(false))
   tags: [omada, auth]
 
@@ -140,6 +149,9 @@
   register: omada_sites_resp
   changed_when: false
   failed_when: omada_sites_resp.status != 200 or (omada_sites_resp.json.errorCode | default(1)) != 0
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_sites_resp is succeeded
   tags: [omada, auth]
 
 - name: Debug sites response

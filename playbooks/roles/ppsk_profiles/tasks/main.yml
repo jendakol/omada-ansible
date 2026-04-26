@@ -19,6 +19,9 @@
   register: omada_ppsk_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_ppsk_resp.status | default(-1) | int > 0
   when: ppsk_profiles | default([]) | length > 0
   tags: [ppsk]
 

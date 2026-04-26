@@ -31,6 +31,9 @@
     return_content: true
   register: _ppsk_networks_resp
   changed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _ppsk_networks_resp is succeeded
   tags: [ppsk]
 
 - name: Build VLAN name to ID mapping
@@ -126,6 +129,9 @@
   when: _existing_ppsk == '' or _existing_ppsk is none
   changed_when: _create_ppsk_result.status in [200, 201] and (_create_ppsk_result.json.errorCode | default(1)) == 0
   failed_when: _create_ppsk_result.status not in [200, 201] or (_create_ppsk_result.json.errorCode | default(1)) != 0
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _create_ppsk_result is succeeded
   tags: [ppsk]
 
 - name: Update PPSK profile name-to-ID mapping after creation
@@ -148,6 +154,9 @@
   when: _existing_ppsk != '' and _existing_ppsk is not none
   changed_when: _update_ppsk_result.status in [200, 204] and (_update_ppsk_result.json.errorCode | default(0)) == 0
   failed_when: _update_ppsk_result.status not in [200, 204] or (_update_ppsk_result.json.errorCode | default(1)) != 0
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _update_ppsk_result is succeeded
   tags: [ppsk]
 
 - name: Debug PPSK profile operation result

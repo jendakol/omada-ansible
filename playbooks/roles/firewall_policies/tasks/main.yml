@@ -19,6 +19,9 @@
   register: omada_gateway_acls_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_gateway_acls_resp.status | default(-1) | int > 0
   tags: [firewall]
 
 - name: Fetch existing Switch ACL rules (type=1)
@@ -32,6 +35,9 @@
   register: omada_switch_acls_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_switch_acls_resp.status | default(-1) | int > 0
   tags: [firewall]
 
 - name: Fetch existing EAP ACL rules (type=2)
@@ -45,6 +51,9 @@
   register: omada_eap_acls_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_eap_acls_resp.status | default(-1) | int > 0
   tags: [firewall]
 
 - name: Debug firewall API response
@@ -100,6 +109,9 @@
     return_content: true
   register: omada_networks_for_acl
   changed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_networks_for_acl is succeeded
   when: _firewall_supported
   tags: [firewall]
 
@@ -129,6 +141,9 @@
   register: omada_acl_ip_groups_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_acl_ip_groups_resp.status | default(-1) | int > 0
   when: _firewall_supported
   tags: [firewall]
 
@@ -143,6 +158,9 @@
   register: omada_acl_ip_port_groups_resp
   changed_when: false
   failed_when: false
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_acl_ip_port_groups_resp.status | default(-1) | int > 0
   when: _firewall_supported
   tags: [firewall]
 
@@ -242,6 +260,9 @@
     return_content: true
   register: _acls_after_update
   loop: [0, 1, 2]  # Gateway, Switch, EAP
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _acls_after_update is succeeded
   when: _firewall_supported
   tags: [firewall]
 
@@ -347,8 +368,12 @@
       type: 0
     status_code: [200]
     return_content: true
+  register: _reorder_gateway_result
   when: _firewall_supported and (_reorder_gateway | length > 0)
   changed_when: true
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _reorder_gateway_result is succeeded
   tags: [firewall]
 
 - name: Reorder Switch ACL rules using modifyIndex API
@@ -363,8 +388,12 @@
       type: 1
     status_code: [200]
     return_content: true
+  register: _reorder_switch_result
   when: _firewall_supported and (_reorder_switch | length > 0)
   changed_when: true
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _reorder_switch_result is succeeded
   tags: [firewall]
 
 - name: Reorder EAP ACL rules using modifyIndex API
@@ -379,8 +408,12 @@
       type: 2
     status_code: [200]
     return_content: true
+  register: _reorder_eap_result
   when: _firewall_supported and (_reorder_eap | length > 0)
   changed_when: true
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: _reorder_eap_result is succeeded
   tags: [firewall]
 
 # ==========================================

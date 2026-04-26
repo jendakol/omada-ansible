@@ -19,6 +19,9 @@
   register: omada_ip_groups_resp
   changed_when: false
   failed_when: omada_ip_groups_resp.status != 200 or (omada_ip_groups_resp.json.errorCode | default(1)) != 0
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_ip_groups_resp is succeeded
   when: (ip_groups | default([]) | length > 0) or (ip_port_groups | default([]) | length > 0)
   tags: [ip_groups]
 
@@ -33,6 +36,9 @@
   register: omada_ip_port_groups_resp
   changed_when: false
   failed_when: omada_ip_port_groups_resp.status != 200 or (omada_ip_port_groups_resp.json.errorCode | default(1)) != 0
+  retries: "{{ omada_api_retries | default(3) }}"
+  delay: "{{ omada_api_retry_delay | default(5) }}"
+  until: omada_ip_port_groups_resp is succeeded
   when: (ip_groups | default([]) | length > 0) or (ip_port_groups | default([]) | length > 0)
   tags: [ip_groups]
 
