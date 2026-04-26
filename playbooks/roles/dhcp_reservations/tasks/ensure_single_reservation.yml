@@ -68,10 +68,10 @@
   register: _create_reservation_result
   when: _existing_reservation == '' or _existing_reservation is none
   changed_when: _create_reservation_result.status in [200, 201] and (_create_reservation_result.json.errorCode | default(1)) == 0
-  failed_when: (_create_reservation_result.status | default(-1) | int) > 0 and (_create_reservation_result.status not in [200, 201] or (_create_reservation_result.json.errorCode | default(1)) != 0)
+  failed_when: _create_reservation_result.status not in [200, 201] or (_create_reservation_result.json is defined and (_create_reservation_result.json.errorCode | default(0)) != 0)
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _create_reservation_result.status | default(-1) | int > 0
+  until: (_create_reservation_result.status | default(-1) | int) != -1 and (_create_reservation_result.status | default(-1) | int) < 500
   tags: [dhcp]
 
 - name: Update DHCP reservation for {{ _device_mac }} if it exists
@@ -87,10 +87,10 @@
   register: _update_reservation_result
   when: _existing_reservation != '' and _existing_reservation is not none
   changed_when: _update_reservation_result.status in [200, 204] and (_update_reservation_result.json.errorCode | default(0)) == 0
-  failed_when: (_update_reservation_result.status | default(-1) | int) > 0 and (_update_reservation_result.status not in [200, 204] or (_update_reservation_result.json.errorCode | default(1)) != 0)
+  failed_when: _update_reservation_result.status not in [200, 204] or (_update_reservation_result.json is defined and (_update_reservation_result.json.errorCode | default(0)) != 0)
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _update_reservation_result.status | default(-1) | int > 0
+  until: (_update_reservation_result.status | default(-1) | int) != -1 and (_update_reservation_result.status | default(-1) | int) < 500
   tags: [dhcp]
 
 - name: Debug reservation operation result

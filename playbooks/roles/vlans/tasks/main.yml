@@ -18,10 +18,10 @@
     return_content: true
   register: omada_networks_resp
   changed_when: false
-  failed_when: (omada_networks_resp.status | default(-1) | int) > 0 and (omada_networks_resp.status != 200 or (omada_networks_resp.json.errorCode | default(1)) != 0)
+  failed_when: omada_networks_resp.status != 200 or (omada_networks_resp.json is defined and (omada_networks_resp.json.errorCode | default(0)) != 0)
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: omada_networks_resp.status | default(-1) | int > 0
+  until: (omada_networks_resp.status | default(-1) | int) != -1 and (omada_networks_resp.status | default(-1) | int) < 500
   tags: [vlans]
 
 - name: Build map of existing networks
@@ -89,10 +89,10 @@
   register: _delete_vlan_results
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _delete_vlan_results.status | default(-1) | int > 0
+  until: (_delete_vlan_results.status | default(-1) | int) != -1 and (_delete_vlan_results.status | default(-1) | int) < 500
   when: omada_auto_cleanup | default(false) and (_vlans_to_delete | default([]) | length > 0)
   changed_when: _delete_vlan_results.status in [200, 204]
-  failed_when: (_delete_vlan_results.status | default(-1) | int) > 0 and (_delete_vlan_results.status not in [200, 204])
+  failed_when: _delete_vlan_results.status not in [200, 204]
   tags: [vlans, cleanup]
 
 - name: Summary of cleanup operations

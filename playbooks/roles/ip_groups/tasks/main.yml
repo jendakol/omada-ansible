@@ -18,10 +18,10 @@
     return_content: true
   register: omada_ip_groups_resp
   changed_when: false
-  failed_when: (omada_ip_groups_resp.status | default(-1) | int) > 0 and (omada_ip_groups_resp.status != 200 or (omada_ip_groups_resp.json.errorCode | default(1)) != 0)
+  failed_when: omada_ip_groups_resp.status != 200 or (omada_ip_groups_resp.json is defined and (omada_ip_groups_resp.json.errorCode | default(0)) != 0)
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: omada_ip_groups_resp.status | default(-1) | int > 0
+  until: (omada_ip_groups_resp.status | default(-1) | int) != -1 and (omada_ip_groups_resp.status | default(-1) | int) < 500
   when: (ip_groups | default([]) | length > 0) or (ip_port_groups | default([]) | length > 0)
   tags: [ip_groups]
 
@@ -35,10 +35,10 @@
     return_content: true
   register: omada_ip_port_groups_resp
   changed_when: false
-  failed_when: (omada_ip_port_groups_resp.status | default(-1) | int) > 0 and (omada_ip_port_groups_resp.status != 200 or (omada_ip_port_groups_resp.json.errorCode | default(1)) != 0)
+  failed_when: omada_ip_port_groups_resp.status != 200 or (omada_ip_port_groups_resp.json is defined and (omada_ip_port_groups_resp.json.errorCode | default(0)) != 0)
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: omada_ip_port_groups_resp.status | default(-1) | int > 0
+  until: (omada_ip_port_groups_resp.status | default(-1) | int) != -1 and (omada_ip_port_groups_resp.status | default(-1) | int) < 500
   when: (ip_groups | default([]) | length > 0) or (ip_port_groups | default([]) | length > 0)
   tags: [ip_groups]
 
@@ -163,10 +163,10 @@
   register: _delete_ip_group_results
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _delete_ip_group_results.status | default(-1) | int > 0
+  until: (_delete_ip_group_results.status | default(-1) | int) != -1 and (_delete_ip_group_results.status | default(-1) | int) < 500
   when: omada_auto_cleanup | default(false) and (_ip_groups_to_delete | default([]) | length > 0)
   changed_when: _delete_ip_group_results.status in [200, 204]
-  failed_when: (_delete_ip_group_results.status | default(-1) | int) > 0 and (_delete_ip_group_results.status not in [200, 204])
+  failed_when: _delete_ip_group_results.status not in [200, 204]
   tags: [ip_groups, cleanup]
 
 - name: Delete IP-Port groups not defined in playbook (auto-cleanup)
@@ -183,10 +183,10 @@
   register: _delete_ip_port_group_results
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _delete_ip_port_group_results.status | default(-1) | int > 0
+  until: (_delete_ip_port_group_results.status | default(-1) | int) != -1 and (_delete_ip_port_group_results.status | default(-1) | int) < 500
   when: omada_auto_cleanup | default(false) and (_ip_port_groups_to_delete | default([]) | length > 0)
   changed_when: _delete_ip_port_group_results.status in [200, 204]
-  failed_when: (_delete_ip_port_group_results.status | default(-1) | int) > 0 and (_delete_ip_port_group_results.status not in [200, 204])
+  failed_when: _delete_ip_port_group_results.status not in [200, 204]
   tags: [ip_groups, cleanup]
 
 - name: Summary of cleanup operations

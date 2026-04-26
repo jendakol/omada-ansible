@@ -141,10 +141,10 @@
   register: _create_pf_result
   when: _existing_pf == '' or _existing_pf is none
   changed_when: _create_pf_result.status in [200, 201] and (_create_pf_result.json.errorCode | default(1)) == 0
-  failed_when: (_create_pf_result.status | default(-1) | int) > 0 and (_create_pf_result.status not in [200, 201] or (_create_pf_result.json.errorCode | default(1)) != 0)
+  failed_when: _create_pf_result.status not in [200, 201] or (_create_pf_result.json is defined and (_create_pf_result.json.errorCode | default(0)) != 0)
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _create_pf_result.status | default(-1) | int > 0
+  until: (_create_pf_result.status | default(-1) | int) != -1 and (_create_pf_result.status | default(-1) | int) < 500
   tags: [port_forward]
 
 - name: Update port forwarding rule {{ pf_item.name }} if it exists
@@ -160,10 +160,10 @@
   register: _update_pf_result
   when: _existing_pf != '' and _existing_pf is not none
   changed_when: _update_pf_result.status in [200, 204] and (_update_pf_result.json.errorCode | default(0)) == 0
-  failed_when: (_update_pf_result.status | default(-1) | int) > 0 and (_update_pf_result.status not in [200, 204] or (_update_pf_result.json.errorCode | default(1)) != 0)
+  failed_when: _update_pf_result.status not in [200, 204] or (_update_pf_result.json is defined and (_update_pf_result.json.errorCode | default(0)) != 0)
   retries: "{{ omada_api_retries | default(3) }}"
   delay: "{{ omada_api_retry_delay | default(5) }}"
-  until: _update_pf_result.status | default(-1) | int > 0
+  until: (_update_pf_result.status | default(-1) | int) != -1 and (_update_pf_result.status | default(-1) | int) < 500
   tags: [port_forward]
 
 - name: Debug port forwarding operation result
